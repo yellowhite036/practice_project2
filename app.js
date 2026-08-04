@@ -165,10 +165,18 @@ function renderRole() {
   $("#roleNote").textContent = roleNotes[state.role];
   $("#permissionBadge").textContent = state.role === "admin" ? "管理員模式" : "作業員模式";
 
-  $$(".admin-only").forEach((button) => {
+  $$(".nav-button.admin-only").forEach((button) => {
+    button.classList.toggle("hidden", state.role !== "admin");
+  });
+
+  $$(".admin-only:not(.nav-button)").forEach((button) => {
     button.disabled = state.role !== "admin";
     button.title = state.role === "admin" ? "" : "此操作限管理員";
   });
+
+  if (state.role !== "admin" && ["molds", "products", "logs"].includes(state.activeView)) {
+    state.activeView = "workorders";
+  }
 }
 
 function renderNavigation() {
@@ -274,6 +282,10 @@ function renderMaterials() {
           <span class="stock-number">${formatAmount(material.stock)} ${material.unit}</span>
           <div class="progress ${low ? "low" : ""}"><span style="width:${ratio}%"></span></div>
           <p>安全量 ${formatAmount(material.safety)} ${material.unit}，容量 ${formatAmount(material.capacity)} ${material.unit}</p>
+          <div class="card-actions ${state.role === 'admin' ? '' : 'hidden'}">
+            <button class="secondary-action edit-material-btn" data-id="${material.id}" type="button">編輯</button>
+            <button class="secondary-action adjust-stock-btn" data-id="${material.id}" type="button">調整庫存</button>
+          </div>
         </article>
       `;
     })
@@ -451,6 +463,102 @@ function resetState() {
   render();
 }
 
+function showMaterialModal(id = null) {
+  if (state.role !== "admin") return;
+  const modal = $("#materialModal");
+  const form = $("#materialForm");
+  form.reset();
+
+  if (id) {
+    const material = getMaterial(id);
+    if (material) {
+      $("#materialOriginalId").value = material.id;
+      $("#materialId").value = material.id;
+      $("#materialName").value = material.name;
+      $("#materialUnit").value = material.unit;
+      $("#materialLocation").value = material.location;
+      $("#materialCapacity").value = material.capacity;
+      $("#materialSafety").value = material.safety;
+    }
+  } else {
+    $("#materialOriginalId").value = "";
+  }
+  modal.showModal();
+}
+
+function showStockModal(id) {
+  if (state.role !== "admin") return;
+  const material = getMaterial(id);
+  if (!material) return;
+  const modal = $("#stockModal");
+  const form = $("#stockForm");
+  form.reset();
+
+  $("#stockMaterialId").value = material.id;
+  $("#stockTargetName").textContent = `${material.id} - ${material.name}`;
+  $("#currentStockDisplay").value = `${formatAmount(material.stock)} ${material.unit}`;
+  modal.showModal();
+}
+
+function closeModals() {
+  $("#materialModal").close();
+  $("#stockModal").close();
+}
+
+function saveMaterial(event) {
+  event.preventDefault();
+  if (state.role !== "admin") return;
+
+  const originalId = $("#materialOriginalId").value;
+  const newId = $("#materialId").value.trim();
+
+  const newMaterial = {
+    id: newId,
+    name: $("#materialName").value.trim(),
+    unit: $("#materialUnit").value.trim(),
+    location: $("#materialLocation").value.trim(),
+    capacity: Number($("#materialCapacity").value),
+    safety: Number($("#materialSafety").value),
+    stock: 0
+  };
+
+  if (originalId) {
+    const index = state.materials.findIndex(m => m.id === originalId);
+    if (index > -1) {
+      newMaterial.stock = state.materials[index].stock;
+      state.materials[index] = newMaterial;
+      addLog("INFO", `管理員已修改物料：${newMaterial.id} (${newMaterial.name})`);
+    }
+  } else {
+    if (getMaterial(newId)) {
+      alert("物料 ID 已存在！");
+      return;
+    }
+    state.materials.push(newMaterial);
+    addLog("INFO", `管理員已新增物料：${newMaterial.id} (${newMaterial.name})`);
+  }
+
+  closeModals();
+  render();
+}
+
+function saveStockAdjustment(event) {
+  event.preventDefault();
+  if (state.role !== "admin") return;
+
+  const id = $("#stockMaterialId").value;
+  const amount = Number($("#adjustStockAmount").value);
+  const material = getMaterial(id);
+
+  if (material) {
+    material.stock = Math.max(0, material.stock + amount);
+    addLog("INFO", `管理員已手動調整 ${material.id} 庫存：${amount > 0 ? '+' : ''}${amount} ${material.unit}，目前為 ${formatAmount(material.stock)} ${material.unit}`);
+  }
+
+  closeModals();
+  render();
+}
+
 function bindEvents() {
   $$(".role-button").forEach((button) => {
     button.addEventListener("click", () => {
@@ -473,6 +581,18 @@ function bindEvents() {
   $("#restockButton").addEventListener("click", restockMaterials);
   $("#releaseMoldsButton").addEventListener("click", releaseScheduledMolds);
   $("#resetButton").addEventListener("click", resetState);
+
+  $("#addMaterialButton").addEventListener("click", () => showMaterialModal());
+  $("#materialCards").addEventListener("click", (e) => {
+    if (e.target.classList.contains("edit-material-btn")) {
+      showMaterialModal(e.target.dataset.id);
+    } else if (e.target.classList.contains("adjust-stock-btn")) {
+      showStockModal(e.target.dataset.id);
+    }
+  });
+  $("#materialForm").addEventListener("submit", saveMaterial);
+  $("#stockForm").addEventListener("submit", saveStockAdjustment);
+  $$(".close-modal-btn").forEach(btn => btn.addEventListener("click", closeModals));
 }
 
 bindEvents();

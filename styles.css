@@ -556,3 +556,53 @@ th {
     min-height: 78px;
   }
 }
+
+.hidden {
+  display: none !important;
+}
+
+/* Modal Styles */
+dialog {
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  box-shadow: var(--shadow);
+  color: var(--ink);
+  padding: 0;
+  width: 480px;
+  max-width: 90vw;
+}
+
+dialog::backdrop {
+  background: rgba(23, 35, 29, 0.4);
+  backdrop-filter: blur(2px);
+}
+
+.dialog-content {
+  padding: 24px;
+}
+
+.dialog-content h3 {
+  margin: 0;
+  font-size: 20px;
+}
+
+.dialog-actions {
+  display: flex;
+  gap: 12px;
+  justify-content: flex-end;
+  margin-top: 24px;
+}
+
+/* Card Actions */
+.card-actions {
+  display: flex;
+  gap: 8px;
+  margin-top: 16px;
+}
+
+.card-actions button {
+  flex: 1;
+  min-height: 36px;
+  font-size: 13px;
+}

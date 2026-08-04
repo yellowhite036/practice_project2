@@ -29,9 +29,9 @@
         <nav class="nav-tabs" aria-label="功能頁籤">
           <button class="nav-button active" data-view="workorders" type="button">工單派發</button>
           <button class="nav-button" data-view="materials" type="button">材料庫存</button>
-          <button class="nav-button" data-view="molds" type="button">模具排程</button>
-          <button class="nav-button" data-view="products" type="button">產品 BOM</button>
-          <button class="nav-button" data-view="logs" type="button">系統紀錄</button>
+          <button class="nav-button admin-only" data-view="molds" type="button">模具排程</button>
+          <button class="nav-button admin-only" data-view="products" type="button">產品 BOM</button>
+          <button class="nav-button admin-only" data-view="logs" type="button">系統紀錄</button>
         </nav>
       </aside>
 
@@ -158,7 +158,10 @@
                 <p class="eyebrow">WMS Materials</p>
                 <h3 id="materialsTitle">材料庫存</h3>
               </div>
-              <button id="restockButton" class="secondary-action admin-only" type="button">一鍵補料</button>
+              <div style="display: flex; gap: 8px;">
+                <button id="addMaterialButton" class="primary-action admin-only" type="button">新增物料</button>
+                <button id="restockButton" class="secondary-action admin-only" type="button">一鍵補料</button>
+              </div>
             </div>
             <div id="materialCards" class="inventory-grid"></div>
           </div>
@@ -203,6 +206,41 @@
         </section>
       </main>
     </div>
+
+    <dialog id="materialModal">
+      <form id="materialForm" class="dialog-content">
+        <h3>新增/編輯物料</h3>
+        <input type="hidden" id="materialOriginalId" name="originalId" />
+        <div class="form-grid" style="margin-top: 16px;">
+          <label>物料 ID<input type="text" id="materialId" name="id" required /></label>
+          <label>物料名稱<input type="text" id="materialName" name="name" required /></label>
+          <label>單位<input type="text" id="materialUnit" name="unit" required /></label>
+          <label>儲位<input type="text" id="materialLocation" name="location" required /></label>
+          <label>容量上限<input type="number" id="materialCapacity" name="capacity" min="1" step="0.01" required /></label>
+          <label>安全庫存<input type="number" id="materialSafety" name="safety" min="0" step="0.01" required /></label>
+        </div>
+        <div class="dialog-actions">
+          <button type="button" class="secondary-action close-modal-btn">取消</button>
+          <button type="submit" class="primary-action" style="width: auto;">儲存</button>
+        </div>
+      </form>
+    </dialog>
+
+    <dialog id="stockModal">
+      <form id="stockForm" class="dialog-content">
+        <h3>手動調整庫存</h3>
+        <p id="stockTargetName" style="margin-top: 8px; color: var(--muted); font-size: 14px;"></p>
+        <input type="hidden" id="stockMaterialId" name="id" />
+        <div style="margin-top: 16px; display: grid; gap: 14px;">
+          <label>目前庫存<input type="text" id="currentStockDisplay" disabled /></label>
+          <label>調整數量 (可為負數)<input type="number" id="adjustStockAmount" name="amount" step="0.01" required /></label>
+        </div>
+        <div class="dialog-actions">
+          <button type="button" class="secondary-action close-modal-btn">取消</button>
+          <button type="submit" class="primary-action" style="width: auto;">確認調整</button>
+        </div>
+      </form>
+    </dialog>
 
     <script src="./app.js"></script>
   </body>
