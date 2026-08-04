@@ -1,0 +1,209 @@
+<!doctype html>
+<html lang="zh-Hant">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>WMS+MES 廠內生產與倉儲系統</title>
+    <link rel="stylesheet" href="./styles.css" />
+  </head>
+  <body>
+    <div class="app-shell">
+      <aside class="sidebar" aria-label="主選單">
+        <div class="brand">
+          <div class="brand-mark">WM</div>
+          <div>
+            <h1>WMS+MES</h1>
+            <p>自動領料與模具排程</p>
+          </div>
+        </div>
+
+        <section class="role-panel" aria-label="使用者權限">
+          <span class="section-label">登入角色</span>
+          <div class="segmented" role="group" aria-label="切換角色">
+            <button class="role-button active" data-role="operator" type="button">作業員</button>
+            <button class="role-button" data-role="admin" type="button">管理員</button>
+          </div>
+          <p id="roleNote" class="role-note">可建立工單、執行自動領料與查看現場狀態。</p>
+        </section>
+
+        <nav class="nav-tabs" aria-label="功能頁籤">
+          <button class="nav-button active" data-view="workorders" type="button">工單派發</button>
+          <button class="nav-button" data-view="materials" type="button">材料庫存</button>
+          <button class="nav-button" data-view="molds" type="button">模具排程</button>
+          <button class="nav-button" data-view="products" type="button">產品 BOM</button>
+          <button class="nav-button" data-view="logs" type="button">系統紀錄</button>
+        </nav>
+      </aside>
+
+      <main class="workspace">
+        <header class="topbar">
+          <div>
+            <p class="eyebrow">智慧工廠模擬場景</p>
+            <h2 id="viewTitle">工單派發</h2>
+          </div>
+          <div class="clock-card">
+            <span>廠內批次</span>
+            <strong id="batchCode">LOT-240804-A</strong>
+          </div>
+        </header>
+
+        <section class="metrics" aria-label="系統摘要">
+          <article class="metric">
+            <span>材料健康度</span>
+            <strong id="materialHealth">--</strong>
+          </article>
+          <article class="metric">
+            <span>可用模具</span>
+            <strong id="moldHealth">--</strong>
+          </article>
+          <article class="metric">
+            <span>今日工單</span>
+            <strong id="workOrderCount">--</strong>
+          </article>
+          <article class="metric attention">
+            <span>異常事件</span>
+            <strong id="exceptionCount">--</strong>
+          </article>
+        </section>
+
+        <section id="workorders" class="view active" aria-labelledby="workordersTitle">
+          <div class="split-layout">
+            <form id="workOrderForm" class="panel" autocomplete="off">
+              <div class="panel-heading">
+                <div>
+                  <p class="eyebrow">Production Order</p>
+                  <h3 id="workordersTitle">建立生產工單</h3>
+                </div>
+                <span id="permissionBadge" class="badge">作業員模式</span>
+              </div>
+
+              <label>
+                產品
+                <select id="productSelect" name="product"></select>
+              </label>
+
+              <div class="form-grid">
+                <label>
+                  生產數量
+                  <input id="quantityInput" name="quantity" min="1" step="1" type="number" value="120" />
+                </label>
+                <label>
+                  產線
+                  <select id="lineSelect" name="line">
+                    <option value="L1">L1 成型線</option>
+                    <option value="L2">L2 組裝線</option>
+                    <option value="L3">L3 包裝線</option>
+                  </select>
+                </label>
+              </div>
+
+              <label>
+                優先順序
+                <select id="prioritySelect" name="priority">
+                  <option value="urgent">急單</option>
+                  <option value="normal" selected>一般</option>
+                  <option value="low">低</option>
+                </select>
+              </label>
+
+              <div id="calculationPreview" class="calculation-preview"></div>
+
+              <button class="primary-action" type="submit">
+                <span class="button-icon">▶</span>
+                執行自動領料與模具綁定
+              </button>
+            </form>
+
+            <div class="panel">
+              <div class="panel-heading">
+                <div>
+                  <p class="eyebrow">Automation Trace</p>
+                  <h3>腳本處理狀態</h3>
+                </div>
+              </div>
+              <ol id="automationSteps" class="step-list"></ol>
+            </div>
+          </div>
+
+          <div class="panel table-panel">
+            <div class="panel-heading">
+              <div>
+                <p class="eyebrow">Dispatch Board</p>
+                <h3>生產工單看板</h3>
+              </div>
+            </div>
+            <div class="table-wrap">
+              <table>
+                <thead>
+                  <tr>
+                    <th>工單</th>
+                    <th>產品</th>
+                    <th>數量</th>
+                    <th>產線</th>
+                    <th>模具</th>
+                    <th>狀態</th>
+                    <th>建立者</th>
+                  </tr>
+                </thead>
+                <tbody id="workOrderTable"></tbody>
+              </table>
+            </div>
+          </div>
+        </section>
+
+        <section id="materials" class="view" aria-labelledby="materialsTitle">
+          <div class="panel table-panel">
+            <div class="panel-heading">
+              <div>
+                <p class="eyebrow">WMS Materials</p>
+                <h3 id="materialsTitle">材料庫存</h3>
+              </div>
+              <button id="restockButton" class="secondary-action admin-only" type="button">一鍵補料</button>
+            </div>
+            <div id="materialCards" class="inventory-grid"></div>
+          </div>
+        </section>
+
+        <section id="molds" class="view" aria-labelledby="moldsTitle">
+          <div class="panel table-panel">
+            <div class="panel-heading">
+              <div>
+                <p class="eyebrow">MES Mold Scheduler</p>
+                <h3 id="moldsTitle">模具排程</h3>
+              </div>
+              <button id="releaseMoldsButton" class="secondary-action admin-only" type="button">釋放已完成模具</button>
+            </div>
+            <div id="moldCards" class="mold-grid"></div>
+          </div>
+        </section>
+
+        <section id="products" class="view" aria-labelledby="productsTitle">
+          <div class="panel table-panel">
+            <div class="panel-heading">
+              <div>
+                <p class="eyebrow">Product Master</p>
+                <h3 id="productsTitle">產品與 BOM</h3>
+              </div>
+            </div>
+            <div id="productCards" class="product-grid"></div>
+          </div>
+        </section>
+
+        <section id="logs" class="view" aria-labelledby="logsTitle">
+          <div class="panel table-panel">
+            <div class="panel-heading">
+              <div>
+                <p class="eyebrow">Audit Trail</p>
+                <h3 id="logsTitle">系統紀錄</h3>
+              </div>
+              <button id="resetButton" class="danger-action admin-only" type="button">重置模擬資料</button>
+            </div>
+            <div id="logList" class="log-list"></div>
+          </div>
+        </section>
+      </main>
+    </div>
+
+    <script src="./app.js"></script>
+  </body>
+</html>
