@@ -355,6 +355,20 @@ function renderPreview() {
     <div><strong>綁定模具：</strong>${mold ? mold.name : '-'} <span class="status-pill ${mold && mold.status === 'Idle' ? 'ok' : 'warn'}">${mold ? translateMoldStatus(mold.status) : '-'}</span></div>
     ${rows}
   `;
+
+  // 根據模具狀態控制按鈕是否可點擊
+  const btn = $("#submitWorkOrderBtn");
+  if (btn) {
+    if (!product || (mold && mold.status !== 'Idle')) {
+      btn.disabled = true;
+      btn.style.opacity = '0.5';
+      btn.style.cursor = 'not-allowed';
+    } else {
+      btn.disabled = false;
+      btn.style.opacity = '1';
+      btn.style.cursor = 'pointer';
+    }
+  }
 }
 
 function renderAutomationSteps(result = null) {
