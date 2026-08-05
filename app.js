@@ -207,8 +207,8 @@ function getMold(id) {
 function getBomForProduct(productId) {
   return (state.bomTable || []).filter(row => row.productId === productId).map(row => ({
     ...row,
-    name:  getMaterial(row.materialId)?.name  || row.materialId,
-    unit:  getMaterial(row.materialId)?.unit  || "",
+    name: getMaterial(row.materialId)?.name || row.materialId,
+    unit: getMaterial(row.materialId)?.unit || "",
     stock: getMaterial(row.materialId)?.stock ?? 0
   }));
 }
@@ -219,10 +219,10 @@ function calculateRequirements(productId, quantity) {
     const material = getMaterial(row.materialId);
     return {
       ...row,
-      name:       material.name,
-      unit:       material.unit,
-      stock:      material.stock,
-      required:   row.amountPerUnit * quantity,
+      name: material.name,
+      unit: material.unit,
+      stock: material.stock,
+      required: row.amountPerUnit * quantity,
       afterStock: material.stock - row.amountPerUnit * quantity
     };
   });
@@ -295,7 +295,7 @@ function renderMaterialOptions() {
   if (!select) return;
   const currentValue = select.value || state.materials[0].id;
   select.innerHTML = state.materials
-    .map((mat) => `<option value="${mat.id}">${mat.name}</option>`)
+    .map((m) => `<option value="${m.id}">${m.name} (${formatAmount(m.stock)}${m.unit})</option>`)
     .join("");
   select.value = state.materials.some((m) => m.id === currentValue) ? currentValue : state.materials[0].id;
 }
@@ -465,8 +465,8 @@ function renderProducts() {
 
   // Simulate SQL JOIN: bom_table JOIN products JOIN molds JOIN materials
   tbody.innerHTML = (state.bomTable || []).map(row => {
-    const product  = getProduct(row.productId);
-    const mold     = product ? getMold(product.moldId) : null;
+    const product = getProduct(row.productId);
+    const mold = product ? getMold(product.moldId) : null;
     const material = getMaterial(row.materialId);
     if (!product || !material) return "";
     const moldStatus = mold ? mold.status : "-";
@@ -519,6 +519,7 @@ function submitWorkOrder(event) {
     render();
     return;
   }
+
   const productId = product.id;
   const quantity = Number($("#quantityInput").value);
   const line = $("#lineSelect").value;
