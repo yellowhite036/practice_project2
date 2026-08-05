@@ -39,8 +39,20 @@ initialMaterials.forEach(mat => {
       name: pName,
       cycleMinutes: 20 + ((mat.id.length + mold.id.length) % 4) * 10,
       moldId: mold.id,
-      bom: [{ materialId: mat.id, amount: mat.id === "MAT-STEEL" ? 2.5 : 1.5 }]
+      stock: 0
     });
+  });
+});
+
+const initialBomTable = [];
+let _bomSeq = 1;
+initialProducts.forEach(product => {
+  const matId = product.id.includes("STEEL") ? "MAT-STEEL" : product.id.includes("PLASTIC") ? "MAT-PLASTIC" : product.id.includes("WOOD") ? "MAT-WOOD" : "MAT-GLASS";
+  initialBomTable.push({
+    bomId: `BOM-${String(_bomSeq++).padStart(4, "0")}`,
+    productId: product.id,
+    materialId: matId,
+    amountPerUnit: matId === "MAT-STEEL" ? 2.5 : 1.5
   });
 });
 
@@ -50,6 +62,7 @@ const seedState = {
   materials: initialMaterials,
   molds: initialMolds,
   products: initialProducts,
+  bomTable: initialBomTable,
   workOrders: [
     { id: "WO-260804-001", productId: "PRD-STEEL-TUBE", quantity: 100, line: "L1", moldId: "MOLD-TUBE", status: "已完工", creator: "管理員" }
   ],
@@ -147,14 +160,19 @@ const $$ = (selector) => [...document.querySelectorAll(selector)];
 
 function loadState() {
   const saved = localStorage.getItem(STORAGE_KEY);
-  if (!saved) return structuredClone(seedState);
-
-  try {
-    return { ...structuredClone(seedState), ...JSON.parse(saved) };
-  } catch {
-    localStorage.removeItem(STORAGE_KEY);
-    return structuredClone(seedState);
+  if (saved) {
+    try {
+      const parsed = JSON.parse(saved);
+      // 自動修正舊版沒有 bomTable 的問題，或合併資料
+      if (!parsed.bomTable) {
+        parsed.bomTable = initialBomTable;
+      }
+      return { ...structuredClone(seedState), ...parsed };
+    } catch {
+      localStorage.removeItem(STORAGE_KEY);
+    }
   }
+  return structuredClone(seedState);
 }
 
 function saveState() {
@@ -186,17 +204,26 @@ function getMold(id) {
   return state.molds.find((mold) => mold.id === id);
 }
 
+function getBomForProduct(productId) {
+  return (state.bomTable || []).filter(row => row.productId === productId).map(row => ({
+    ...row,
+    name:  getMaterial(row.materialId)?.name  || row.materialId,
+    unit:  getMaterial(row.materialId)?.unit  || "",
+    stock: getMaterial(row.materialId)?.stock ?? 0
+  }));
+}
+
 function calculateRequirements(productId, quantity) {
-  const product = getProduct(productId);
-  return product.bom.map((item) => {
-    const material = getMaterial(item.materialId);
+  const bomRows = getBomForProduct(productId);
+  return bomRows.map((row) => {
+    const material = getMaterial(row.materialId);
     return {
-      ...item,
-      name: material.name,
-      unit: material.unit,
-      stock: material.stock,
-      required: item.amount * quantity,
-      afterStock: material.stock - item.amount * quantity
+      ...row,
+      name:       material.name,
+      unit:       material.unit,
+      stock:      material.stock,
+      required:   row.amountPerUnit * quantity,
+      afterStock: material.stock - row.amountPerUnit * quantity
     };
   });
 }
@@ -419,30 +446,31 @@ function renderMolds() {
 }
 
 function renderProducts() {
-  $("#productCards").innerHTML = state.products
-    .map((product) => {
-      const mold = getMold(product.moldId);
-      const bom = product.bom
-        .map((item) => {
-          const material = getMaterial(item.materialId);
-          return `<p>${material.name}: ${formatAmount(item.amount)} ${material.unit}/件</p>`;
-        })
-        .join("");
+  const tbody = $("#bomTableBody");
+  if (!tbody) return;
 
-      return `
-        <article class="product-card">
-          <div class="card-top">
-            <div>
-              <h4>${product.name}</h4>
-              <p>${product.id} · 標準節拍 ${product.cycleMinutes} 分鐘</p>
-            </div>
-            <span class="status-pill ${mold.status === "Idle" ? "ok" : "warn"}">${mold.id}</span>
-          </div>
-          ${bom}
-        </article>
-      `;
-    })
-    .join("");
+  // Simulate SQL JOIN: bom_table JOIN products JOIN molds JOIN materials
+  tbody.innerHTML = (state.bomTable || []).map(row => {
+    const product  = getProduct(row.productId);
+    const mold     = product ? getMold(product.moldId) : null;
+    const material = getMaterial(row.materialId);
+    if (!product || !material) return "";
+    const moldStatus = mold ? mold.status : "-";
+    return `
+      <tr>
+        <td><code>${row.bomId}</code></td>
+        <td><code>${row.productId}</code></td>
+        <td><strong>${product.name}</strong></td>
+        <td><span class="status-pill ok">${formatAmount(product.stock || 0)} 件</span></td>
+        <td><code>${product.moldId}</code></td>
+        <td><span class="status-pill ${moldStatus === 'Idle' ? 'ok' : 'warn'}">${translateMoldStatus(moldStatus)}</span></td>
+        <td><code>${row.materialId}</code></td>
+        <td>${material.name}</td>
+        <td>${formatAmount(row.amountPerUnit)} ${material.unit}</td>
+        <td>${product.cycleMinutes}</td>
+      </tr>
+    `;
+  }).join("");
 }
 
 function renderLogs() {
@@ -505,32 +533,19 @@ function submitWorkOrder(event) {
     return;
   }
 
-  // ── DB CONSTRAINT: CHECK (stock >= 0) ──
-  let constraintErr = null;
+  // 扣料寫入
   requirements.forEach((item) => {
-    if (constraintErr) return;
     const mat = getMaterial(item.materialId);
-    const result = setMaterialStock(mat, mat.stock - item.required);
-    if (!result.ok) constraintErr = result.error;
+    mat.stock = mat.stock - item.required;
   });
 
-  if (constraintErr) {
-    addLog("ERR", constraintErr);
-    state.lastAutomation = { failedAt: 1, success: false };
-    render();
-    return;
-  }
-
-  // ── DB CONSTRAINT: ENUM ('Idle','In_Use') ──
-  const moldStatusResult = setMoldStatus(mold, "In_Use");
-  if (!moldStatusResult.ok) {
-    addLog("ERR", moldStatusResult.error);
-    state.lastAutomation = { failedAt: 2, success: false };
-    render();
-    return;
-  }
+  // 更新模具狀態
+  mold.status = "In_Use";
   mold.line = line;
   mold.eta = estimateEta(product.cycleMinutes, quantity);
+
+  // 增加產品庫存
+  product.stock = (product.stock || 0) + quantity;
 
   const order = {
     id: nextWorkOrderId(),
