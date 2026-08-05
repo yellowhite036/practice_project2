@@ -606,3 +606,41 @@ dialog::backdrop {
   min-height: 36px;
   font-size: 13px;
 }
+
+/* Product Result (cross-combination display) */
+.product-result {
+  margin: 4px 0 8px;
+  min-height: 44px;
+}
+
+.product-result-inner {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  background: var(--surface-strong);
+  border: 1.5px solid var(--accent);
+  border-radius: 8px;
+  padding: 10px 14px;
+}
+
+.product-result-label {
+  font-size: 12px;
+  color: var(--muted);
+  white-space: nowrap;
+}
+
+.product-result-name {
+  flex: 1;
+  font-weight: 700;
+  font-size: 15px;
+  color: var(--accent-strong);
+}
+
+.product-result-none {
+  background: #fff7ed;
+  border: 1.5px dashed var(--warning);
+  border-radius: 8px;
+  padding: 10px 14px;
+  font-size: 13px;
+  color: var(--warning);
+}

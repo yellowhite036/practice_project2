@@ -1,64 +1,123 @@
-const STORAGE_KEY = "wms-mes-demo-state";
+const STORAGE_KEY = "wms-mes-demo-state-v23";
+
+const initialMaterials = [
+  { id: "MAT-STEEL", name: "鋼鐵", unit: "kg", stock: 1500, capacity: 2000, safety: 300, location: "A-01-01" },
+  { id: "MAT-PLASTIC", name: "塑膠", unit: "kg", stock: 1200, capacity: 2000, safety: 400, location: "A-01-02" },
+  { id: "MAT-WOOD", name: "木材", unit: "kg", stock: 800, capacity: 1500, safety: 200, location: "B-01-01" },
+  { id: "MAT-GLASS", name: "玻璃", unit: "kg", stock: 600, capacity: 1000, safety: 150, location: "B-01-02" }
+];
+
+const initialMolds = [
+  { id: "MOLD-TUBE", name: "長管塑型模具", status: "Idle", line: "-", eta: "-", productId: "" },
+  { id: "MOLD-BOTTLE", name: "水壺模具", status: "Idle", line: "-", eta: "-", productId: "" },
+  { id: "MOLD-BOX", name: "方塊模具", status: "Idle", line: "-", eta: "-", productId: "" },
+  { id: "MOLD-PLATE", name: "平板模具", status: "Idle", line: "-", eta: "-", productId: "" }
+];
+
+const productNames = {
+  "MAT-STEEL_MOLD-TUBE": "鋼管",
+  "MAT-PLASTIC_MOLD-TUBE": "塑膠管",
+  "MAT-STEEL_MOLD-BOTTLE": "鐵水壺",
+  "MAT-PLASTIC_MOLD-BOTTLE": "水壺",
+};
+
+const initialProducts = [];
+initialMaterials.forEach(mat => {
+  initialMolds.forEach(mold => {
+    const key = `${mat.id}_${mold.id}`;
+    let pName = productNames[key];
+    if (!pName) {
+      const shortMat = mat.name.replace("鋼鐵", "鐵").replace("木材", "木");
+      const shortMold = mold.name.replace("模具", "").replace("塑型", "");
+      pName = `${shortMat}${shortMold}`;
+    }
+    const productId = `PRD-${mat.id.split('-')[1]}-${mold.id.split('-')[1]}`;
+    if (!mold.productId) mold.productId = productId;
+
+    initialProducts.push({
+      id: productId,
+      name: pName,
+      cycleMinutes: 20 + ((mat.id.length + mold.id.length) % 4) * 10,
+      moldId: mold.id,
+      bom: [{ materialId: mat.id, amount: mat.id === "MAT-STEEL" ? 2.5 : 1.5 }]
+    });
+  });
+});
 
 const seedState = {
   role: "operator",
   activeView: "workorders",
-  materials: [
-    { id: "MAT-ABS", name: "ABS 塑料粒", unit: "kg", stock: 860, capacity: 1200, safety: 260, location: "A-01-03" },
-    { id: "MAT-SCREW", name: "M3 螺絲", unit: "pcs", stock: 3200, capacity: 5000, safety: 1000, location: "B-12-01" },
-    { id: "MAT-PCB", name: "控制板 PCB", unit: "pcs", stock: 460, capacity: 800, safety: 180, location: "E-02-09" },
-    { id: "MAT-LABEL", name: "序號標籤", unit: "pcs", stock: 1900, capacity: 3000, safety: 600, location: "P-04-02" }
-  ],
-  molds: [
-    { id: "MOLD-A17", name: "上蓋射出模", status: "available", line: "-", eta: "-", productId: "PRD-A100" },
-    { id: "MOLD-B08", name: "底座射出模", status: "available", line: "-", eta: "-", productId: "PRD-B220" },
-    { id: "MOLD-C31", name: "面板沖壓模", status: "maintenance", line: "保養室", eta: "16:30", productId: "PRD-C310" }
-  ],
-  products: [
-    {
-      id: "PRD-A100",
-      name: "智慧感測盒 A100",
-      cycleMinutes: 36,
-      moldId: "MOLD-A17",
-      bom: [
-        { materialId: "MAT-ABS", amount: 0.42 },
-        { materialId: "MAT-SCREW", amount: 6 },
-        { materialId: "MAT-PCB", amount: 1 },
-        { materialId: "MAT-LABEL", amount: 1 }
-      ]
-    },
-    {
-      id: "PRD-B220",
-      name: "馬達控制器 B220",
-      cycleMinutes: 52,
-      moldId: "MOLD-B08",
-      bom: [
-        { materialId: "MAT-ABS", amount: 0.65 },
-        { materialId: "MAT-SCREW", amount: 8 },
-        { materialId: "MAT-PCB", amount: 1 },
-        { materialId: "MAT-LABEL", amount: 1 }
-      ]
-    },
-    {
-      id: "PRD-C310",
-      name: "工業面板 C310",
-      cycleMinutes: 48,
-      moldId: "MOLD-C31",
-      bom: [
-        { materialId: "MAT-ABS", amount: 0.38 },
-        { materialId: "MAT-SCREW", amount: 4 },
-        { materialId: "MAT-LABEL", amount: 1 }
-      ]
-    }
-  ],
+  materials: initialMaterials,
+  molds: initialMolds,
+  products: initialProducts,
   workOrders: [
-    { id: "WO-260804-001", productId: "PRD-B220", quantity: 60, line: "L2", moldId: "MOLD-B08", status: "已完工", creator: "管理員" }
+    { id: "WO-260804-001", productId: "PRD-STEEL-TUBE", quantity: 100, line: "L1", moldId: "MOLD-TUBE", status: "已完工", creator: "管理員" }
   ],
   lastAutomation: null,
   logs: [
     { type: "INFO", message: "系統初始化：載入材料、模具與產品主資料。", time: "08:00:00" }
   ]
 };
+
+// ─────────────────────────────────────────────
+// DATABASE CONSTRAINT LAYER
+// Mirrors SQL-level rules enforced at the data layer:
+//   CHECK (stock >= 0)          — material quantity
+//   ENUM ('Idle','In_Use')      — mold status
+// ─────────────────────────────────────────────
+
+const MOLD_STATUS_ENUM = Object.freeze(["Idle", "In_Use"]);
+
+/**
+ * DB CHECK: material stock cannot go below 0.
+ * Throws a constraint error string if violated.
+ * @param {number} newStock - proposed new stock value
+ * @param {string} materialName - for error message
+ */
+function dbCheckStock(newStock, materialName) {
+  if (newStock < 0) {
+    throw new Error(`[DB CONSTRAINT] CHECK (stock >= 0) 違反：${materialName} 扣減後庫存為 ${newStock.toFixed(2)}，不可為負數。`);
+  }
+}
+
+/**
+ * DB CHECK: mold status must be one of the defined ENUM values.
+ * Throws a constraint error string if violated.
+ * @param {string} newStatus - proposed new status
+ */
+function dbCheckMoldStatus(newStatus) {
+  if (!MOLD_STATUS_ENUM.includes(newStatus)) {
+    throw new Error(`[DB CONSTRAINT] ENUM ('${MOLD_STATUS_ENUM.join("','")}'}) 違反：模具狀態「${newStatus}」不在允許的 Enum 值中。`);
+  }
+}
+
+/**
+ * Safe wrapper: set material stock with DB constraint check.
+ * Returns { ok: true } or { ok: false, error: string }
+ */
+function setMaterialStock(material, newStock) {
+  try {
+    dbCheckStock(newStock, material.name);
+    material.stock = Number(newStock.toFixed(2));
+    return { ok: true };
+  } catch (e) {
+    return { ok: false, error: e.message };
+  }
+}
+
+/**
+ * Safe wrapper: set mold status with DB constraint check.
+ * Returns { ok: true } or { ok: false, error: string }
+ */
+function setMoldStatus(mold, newStatus) {
+  try {
+    dbCheckMoldStatus(newStatus);
+    mold.status = newStatus;
+    return { ok: true };
+  } catch (e) {
+    return { ok: false, error: e.message };
+  }
+}
 
 let state = loadState();
 
@@ -146,7 +205,9 @@ function render() {
   renderRole();
   renderNavigation();
   renderMetrics();
-  renderProductOptions();
+  renderMaterialOptions();
+  renderMoldOptions();
+  renderCombinedProduct();
   renderPreview();
   renderAutomationSteps(state.lastAutomation);
   renderWorkOrders();
@@ -170,8 +231,10 @@ function renderRole() {
   });
 
   $$(".admin-only:not(.nav-button)").forEach((button) => {
-    button.disabled = state.role !== "admin";
-    button.title = state.role === "admin" ? "" : "此操作限管理員";
+    const isAdmin = state.role === "admin";
+    button.classList.toggle("hidden", !isAdmin);
+    button.disabled = !isAdmin;
+    button.title = isAdmin ? "" : "此操作限管理員";
   });
 
   if (state.role !== "admin" && ["molds", "products", "logs"].includes(state.activeView)) {
@@ -200,18 +263,58 @@ function renderMetrics() {
   $("#exceptionCount").textContent = exceptions;
 }
 
-function renderProductOptions() {
-  const select = $("#productSelect");
-  const currentValue = select.value || state.products[0].id;
-  select.innerHTML = state.products
-    .map((product) => `<option value="${product.id}">${product.name}</option>`)
+function renderMaterialOptions() {
+  const select = $("#materialSelect");
+  if (!select) return;
+  const currentValue = select.value || state.materials[0].id;
+  select.innerHTML = state.materials
+    .map((mat) => `<option value="${mat.id}">${mat.name}</option>`)
     .join("");
-  select.value = state.products.some((product) => product.id === currentValue) ? currentValue : state.products[0].id;
+  select.value = state.materials.some((m) => m.id === currentValue) ? currentValue : state.materials[0].id;
+}
+
+function renderMoldOptions() {
+  const select = $("#moldSelect");
+  if (!select) return;
+  const currentValue = select.value || state.molds[0].id;
+  select.innerHTML = state.molds
+    .map((mold) => `<option value="${mold.id}">${mold.name} (${translateMoldStatus(mold.status)})</option>`)
+    .join("");
+  select.value = state.molds.some((mold) => mold.id === currentValue) ? currentValue : state.molds[0].id;
+}
+
+function getDerivedProduct() {
+  const matId = $("#materialSelect") ? $("#materialSelect").value : null;
+  const moldId = $("#moldSelect") ? $("#moldSelect").value : null;
+  if (!matId || !moldId) return state.products[0];
+  return state.products.find((p) => p.bom.some((b) => b.materialId === matId) && p.moldId === moldId) || state.products[0];
+}
+
+function renderCombinedProduct() {
+  const el = $("#productResult");
+  if (!el) return;
+  const product = getDerivedProduct();
+  if (!product) {
+    el.innerHTML = `<div class="product-result-none">⚠️ 此組合尚未定義產品</div>`;
+    return;
+  }
+  const mold = getMold(product.moldId);
+  el.innerHTML = `
+    <div class="product-result-inner">
+      <span class="product-result-label">組合產品</span>
+      <span class="product-result-name">${product.name}</span>
+      <span class="status-pill ${mold && mold.status === 'Idle' ? 'ok' : 'warn'}">${mold ? translateMoldStatus(mold.status) : '-'}</span>
+    </div>
+  `;
 }
 
 function renderPreview() {
-  const product = getProduct($("#productSelect").value || state.products[0].id);
-  const quantity = Number($("#quantityInput").value || 0);
+  const product = getDerivedProduct();
+  if (!product) {
+    $("#calculationPreview").innerHTML = `<div>⚠️ 請選擇有效的材料與模具組合</div>`;
+    return;
+  }
+  const quantity = Number($("#quantityInput") ? $("#quantityInput").value || 0 : 0);
   const requirements = calculateRequirements(product.id, Math.max(quantity, 0));
   const mold = getMold(product.moldId);
   const rows = requirements
@@ -222,7 +325,7 @@ function renderPreview() {
     .join("");
 
   $("#calculationPreview").innerHTML = `
-    <div><strong>綁定模具：</strong>${mold.name} <span class="status-pill ${mold.status === "available" ? "ok" : "warn"}">${mold.status}</span></div>
+    <div><strong>綁定模具：</strong>${mold ? mold.name : '-'} <span class="status-pill ${mold && mold.status === 'Idle' ? 'ok' : 'warn'}">${mold ? translateMoldStatus(mold.status) : '-'}</span></div>
     ${rows}
   `;
 }
@@ -285,6 +388,7 @@ function renderMaterials() {
           <div class="card-actions ${state.role === 'admin' ? '' : 'hidden'}">
             <button class="secondary-action edit-material-btn" data-id="${material.id}" type="button">編輯</button>
             <button class="secondary-action adjust-stock-btn" data-id="${material.id}" type="button">調整庫存</button>
+            <button class="danger-action delete-material-btn" data-id="${material.id}" type="button">刪除</button>
           </div>
         </article>
       `;
@@ -295,7 +399,7 @@ function renderMaterials() {
 function renderMolds() {
   $("#moldCards").innerHTML = state.molds
     .map((mold) => {
-      const locked = mold.status !== "available";
+      const locked = mold.status !== "Idle";
       const product = getProduct(mold.productId);
       return `
         <article class="mold-card ${locked ? "locked" : ""}">
@@ -304,7 +408,7 @@ function renderMolds() {
               <h4>${mold.name}</h4>
               <p>${mold.id} · 綁定 ${product.name}</p>
             </div>
-            <span class="status-pill ${mold.status === "available" ? "ok" : "warn"}">${translateMoldStatus(mold.status)}</span>
+            <span class="status-pill ${mold.status === "Idle" ? "ok" : "warn"}">${translateMoldStatus(mold.status)}</span>
           </div>
           <p>目前位置：${mold.line}</p>
           <p>預計釋放：${mold.eta}</p>
@@ -332,7 +436,7 @@ function renderProducts() {
               <h4>${product.name}</h4>
               <p>${product.id} · 標準節拍 ${product.cycleMinutes} 分鐘</p>
             </div>
-            <span class="status-pill ${mold.status === "available" ? "ok" : "warn"}">${mold.id}</span>
+            <span class="status-pill ${mold.status === "Idle" ? "ok" : "warn"}">${mold.id}</span>
           </div>
           ${bom}
         </article>
@@ -358,19 +462,24 @@ function renderLogs() {
 
 function translateMoldStatus(status) {
   return {
-    available: "可用",
-    scheduled: "已排程",
-    maintenance: "保養中"
-  }[status];
+    Idle: "閒置",
+    In_Use: "使用中"
+  }[status] || status;
 }
 
 function submitWorkOrder(event) {
   event.preventDefault();
 
-  const productId = $("#productSelect").value;
+  const product = getDerivedProduct();
+  if (!product) {
+    addLog("ERR", "工單建立失敗：選取的材料與模具組合無對應產品。");
+    state.lastAutomation = { failedAt: 0, success: false };
+    render();
+    return;
+  }
+  const productId = product.id;
   const quantity = Number($("#quantityInput").value);
   const line = $("#lineSelect").value;
-  const product = getProduct(productId);
   const mold = getMold(product.moldId);
   const requirements = calculateRequirements(productId, quantity);
 
@@ -389,19 +498,37 @@ function submitWorkOrder(event) {
     return;
   }
 
-  if (mold.status !== "available") {
+  if (mold.status !== "Idle") {
     addLog("WARN", `工單暫停：${mold.name} 目前${translateMoldStatus(mold.status)}，無法綁定到 ${line}。`);
     state.lastAutomation = { failedAt: 2, success: false };
     render();
     return;
   }
 
+  // ── DB CONSTRAINT: CHECK (stock >= 0) ──
+  let constraintErr = null;
   requirements.forEach((item) => {
-    const material = getMaterial(item.materialId);
-    material.stock = Number((material.stock - item.required).toFixed(2));
+    if (constraintErr) return;
+    const mat = getMaterial(item.materialId);
+    const result = setMaterialStock(mat, mat.stock - item.required);
+    if (!result.ok) constraintErr = result.error;
   });
 
-  mold.status = "scheduled";
+  if (constraintErr) {
+    addLog("ERR", constraintErr);
+    state.lastAutomation = { failedAt: 1, success: false };
+    render();
+    return;
+  }
+
+  // ── DB CONSTRAINT: ENUM ('Idle','In_Use') ──
+  const moldStatusResult = setMoldStatus(mold, "In_Use");
+  if (!moldStatusResult.ok) {
+    addLog("ERR", moldStatusResult.error);
+    state.lastAutomation = { failedAt: 2, success: false };
+    render();
+    return;
+  }
   mold.line = line;
   mold.eta = estimateEta(product.cycleMinutes, quantity);
 
@@ -446,11 +573,17 @@ function releaseScheduledMolds() {
   if (state.role !== "admin") return;
   let count = 0;
   state.molds = state.molds.map((mold) => {
-    if (mold.status !== "scheduled") return mold;
+    if (mold.status !== "In_Use") return mold;
     count += 1;
-    return { ...mold, status: "available", line: "-", eta: "-" };
+    // ── DB CONSTRAINT: ENUM ──
+    const result = setMoldStatus(mold, "Idle");
+    if (!result.ok) {
+      addLog("ERR", result.error);
+      return mold;
+    }
+    return { ...mold, status: "Idle", line: "-", eta: "-" };
   });
-  addLog("INFO", `管理員已釋放 ${count} 組已排程模具。`);
+  addLog("INFO", `管理員已釋放 ${count} 組使用中模具 → Idle。`);
   render();
 }
 
@@ -542,6 +675,31 @@ function saveMaterial(event) {
   render();
 }
 
+function deleteMaterial(id) {
+  if (state.role !== "admin") return;
+  const material = getMaterial(id);
+  if (!material) return;
+
+  const usedByProducts = state.products.filter((product) =>
+    product.bom.some((item) => item.materialId === id)
+  );
+
+  if (usedByProducts.length > 0) {
+    const names = usedByProducts.map((p) => p.name).join("、");
+    alert(`無法刪除：${material.name} 仍被以下產品的 BOM 使用中 - ${names}`);
+    addLog("WARN", `刪除物料失敗：${material.name} 仍被 ${names} 引用。`);
+    return;
+  }
+
+  if (!confirm(`確定要刪除物料「${material.name}」(${material.id}) 嗎？此操作無法復原。`)) {
+    return;
+  }
+
+  state.materials = state.materials.filter((m) => m.id !== id);
+  addLog("INFO", `管理員已刪除物料：${material.id} (${material.name})`);
+  render();
+}
+
 function saveStockAdjustment(event) {
   event.preventDefault();
   if (state.role !== "admin") return;
@@ -551,7 +709,15 @@ function saveStockAdjustment(event) {
   const material = getMaterial(id);
 
   if (material) {
-    material.stock = Math.max(0, material.stock + amount);
+    const newStock = material.stock + amount;
+    // ── DB CONSTRAINT: CHECK (stock >= 0) ──
+    const result = setMaterialStock(material, newStock);
+    if (!result.ok) {
+      addLog("ERR", result.error);
+      closeModals();
+      render();
+      return;
+    }
     addLog("INFO", `管理員已手動調整 ${material.id} 庫存：${amount > 0 ? '+' : ''}${amount} ${material.unit}，目前為 ${formatAmount(material.stock)} ${material.unit}`);
   }
 
@@ -575,7 +741,20 @@ function bindEvents() {
     });
   });
 
-  $("#productSelect").addEventListener("change", renderPreview);
+  const materialSelect = $("#materialSelect");
+  const moldSelect = $("#moldSelect");
+  if (materialSelect) {
+    materialSelect.addEventListener("change", () => {
+      renderCombinedProduct();
+      renderPreview();
+    });
+  }
+  if (moldSelect) {
+    moldSelect.addEventListener("change", () => {
+      renderCombinedProduct();
+      renderPreview();
+    });
+  }
   $("#quantityInput").addEventListener("input", renderPreview);
   $("#workOrderForm").addEventListener("submit", submitWorkOrder);
   $("#restockButton").addEventListener("click", restockMaterials);
@@ -588,6 +767,8 @@ function bindEvents() {
       showMaterialModal(e.target.dataset.id);
     } else if (e.target.classList.contains("adjust-stock-btn")) {
       showStockModal(e.target.dataset.id);
+    } else if (e.target.classList.contains("delete-material-btn")) {
+      deleteMaterial(e.target.dataset.id);
     }
   });
   $("#materialForm").addEventListener("submit", saveMaterial);
