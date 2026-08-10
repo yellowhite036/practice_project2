@@ -314,7 +314,10 @@ function getDerivedProduct() {
   const matId = $("#materialSelect") ? $("#materialSelect").value : null;
   const moldId = $("#moldSelect") ? $("#moldSelect").value : null;
   if (!matId || !moldId) return state.products[0];
-  return state.products.find((p) => p.bom.some((b) => b.materialId === matId) && p.moldId === moldId) || state.products[0];
+  return state.products.find((p) =>
+    p.moldId === moldId &&
+    (state.bomTable || []).some((b) => b.productId === p.id && b.materialId === matId)
+  ) || state.products[0];
 }
 
 function renderCombinedProduct() {
@@ -710,8 +713,11 @@ function deleteMaterial(id) {
   const material = getMaterial(id);
   if (!material) return;
 
+  const usedProductIds = (state.bomTable || [])
+    .filter((item) => item.materialId === id)
+    .map((item) => item.productId);
   const usedByProducts = state.products.filter((product) =>
-    product.bom.some((item) => item.materialId === id)
+    usedProductIds.includes(product.id)
   );
 
   if (usedByProducts.length > 0) {
