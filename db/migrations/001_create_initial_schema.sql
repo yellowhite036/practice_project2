@@ -1,13 +1,10 @@
 CREATE TABLE users (
   user_id TEXT PRIMARY KEY,
-  username TEXT NOT NULL UNIQUE,
-  display_name TEXT NOT NULL,
+  name TEXT NOT NULL,
   role TEXT NOT NULL,
   created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
   updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-  version INTEGER NOT NULL DEFAULT 1,
-  CONSTRAINT users_role_check CHECK (role IN ('operator', 'admin')),
-  CONSTRAINT users_version_check CHECK (version > 0)
+  CONSTRAINT users_role_check CHECK (role IN ('operator', 'admin'))
 );
 
 CREATE TABLE materials (
@@ -91,26 +88,17 @@ CREATE TABLE work_orders (
 
 CREATE TABLE inventory_transactions (
   transaction_id BIGSERIAL PRIMARY KEY,
-  item_type TEXT NOT NULL,
+  work_order_id TEXT,
   material_id TEXT,
   product_id TEXT,
   transaction_type TEXT NOT NULL,
-  quantity_delta NUMERIC(14, 3) NOT NULL,
-  stock_before NUMERIC(14, 3),
-  stock_after NUMERIC(14, 3),
-  work_order_id TEXT,
-  created_by_user_id TEXT,
+  quantity NUMERIC(14, 3) NOT NULL,
   created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  created_by_user_id TEXT,
+  CONSTRAINT inventory_transactions_work_order_id_fk FOREIGN KEY (work_order_id) REFERENCES work_orders (work_order_id),
   CONSTRAINT inventory_transactions_material_id_fk FOREIGN KEY (material_id) REFERENCES materials (material_id),
   CONSTRAINT inventory_transactions_product_id_fk FOREIGN KEY (product_id) REFERENCES products (product_id),
-  CONSTRAINT inventory_transactions_work_order_id_fk FOREIGN KEY (work_order_id) REFERENCES work_orders (work_order_id),
   CONSTRAINT inventory_transactions_created_by_user_id_fk FOREIGN KEY (created_by_user_id) REFERENCES users (user_id),
-  CONSTRAINT inventory_transactions_item_type_check CHECK (item_type IN ('Material', 'Product')),
-  CONSTRAINT inventory_transactions_item_reference_check CHECK (
-    (item_type = 'Material' AND material_id IS NOT NULL AND product_id IS NULL)
-    OR
-    (item_type = 'Product' AND product_id IS NOT NULL AND material_id IS NULL)
-  ),
   CONSTRAINT inventory_transactions_transaction_type_check CHECK (
     transaction_type IN ('consume', 'restock', 'produce', 'adjust')
   )
@@ -142,5 +130,6 @@ CREATE INDEX inventory_transactions_material_id_idx ON inventory_transactions (m
 CREATE INDEX inventory_transactions_product_id_idx ON inventory_transactions (product_id);
 CREATE INDEX inventory_transactions_work_order_id_idx ON inventory_transactions (work_order_id);
 CREATE INDEX inventory_transactions_created_at_idx ON inventory_transactions (created_at);
+CREATE INDEX system_logs_work_order_id_idx ON system_logs (work_order_id);
 CREATE INDEX system_logs_level_idx ON system_logs (level);
 CREATE INDEX system_logs_created_at_idx ON system_logs (created_at);

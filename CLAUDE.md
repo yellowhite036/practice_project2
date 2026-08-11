@@ -1,4 +1,4 @@
-# WMS + MES 生產管理系統 — Codex / Claude Code 開發規範
+# WMS + MES 生產管理系統 — Claude Code 開發規範
 
 ## 1. 專案基準
 
@@ -14,52 +14,78 @@ GitHub：
 https://github.com/yellowhite036/practice_project2
 ```
 
-目前正式開發基準：
+正式開發 Branch：
 
 ```text
 master
 ```
 
-目前已確認 `master` 為純前端 Prototype。
-
-`master` 目前主要檔案：
+目前專案架構逐步由：
 
 ```text
-README.md
-index.html
-app.js
-styles.css
-```
-
-目前 `master` 尚未正式具備：
-
-```text
-Node.js / Express Backend
+Frontend Prototype
+    ↓
+Node.js / Express
+    ↓
 PostgreSQL
-Database Migration
-PostgreSQL Transaction
-Pessimistic Lock
-Optimistic Lock
-JWT Authentication
-Docker
-Playwright
-Concurrent Worker
-Race Condition Test
 ```
 
-因此不得假設上述功能已存在。
+升級為完整 WMS + MES 系統。
 
 ---
 
-# 2. Git Branch 規則
+# 2. 七階段開發流程
 
-所有正式開發必須以：
+正式開發只使用以下 7 個 Issue：
 
 ```text
-master
+#1 Database + BOM
+ ↓
+#2 Backend + Environment
+ ↓
+#3 Transaction + Pessimistic Lock
+ ↓
+#4 Optimistic Lock + Constraint Handling
+ ↓
+#5 Docker + Network Isolation
+ ↓
+#6 Playwright E2E
+ ↓
+#7 Concurrent Race Condition
 ```
 
-為基準。
+不得重新使用舊的：
+
+```text
+#0
+#16
+#17
+#18
+#19
+#20
+#21
+#22
+#23
+#24
+```
+
+作為新的開發順序。
+
+原 Issue 功能已合併到新的 7 個 Issue。
+
+目前已完成的 Backend API Constraint Handling 視為：
+
+```text
+Issue #2
+```
+
+的一部分。
+
+不得重複實作。
+
+---
+
+# 3. Git Branch
 
 開始工作前必須確認：
 
@@ -69,37 +95,41 @@ git status
 git log --oneline --decorate -5
 ```
 
-確認目前 Branch 與工作區狀態。
+正式開發使用：
 
-如果目前為：
+```text
+master
+```
+
+如果：
 
 ```text
 HEAD (no branch)
 ```
 
-不得直接在 detached HEAD 上進行正式開發。
-
-必須先確認使用者是否允許切換至 `master`。
+不得直接進行正式開發。
 
 ---
 
-# 3. 工作區安全規則
+# 4. 工作區安全
 
-開始任何工作前必須檢查：
+開始工作前：
 
 ```bash
 git status
 ```
 
-如果存在未提交修改：
+如果存在使用者未提交修改：
 
 ```text
-README.md modified
-CLAUDE.md untracked
-其他使用者修改
+modified
+untracked
+staged
 ```
 
-不得自行：
+不得自行刪除或覆蓋。
+
+禁止自行執行：
 
 ```bash
 git reset --hard
@@ -108,199 +138,99 @@ git checkout -- .
 git restore .
 ```
 
-不得覆蓋使用者既有修改。
-
-不得自行刪除未追蹤檔案。
+不得修改與目前 Issue 無關的檔案。
 
 ---
 
-# 4. Detached HEAD 版本規則
+# 5. Issue 開發規則
 
-目前已知 detached HEAD 可能包含：
+每次只處理一個 Issue。
 
-```text
-package.json
-package-lock.json
-server.js
-.gitignore
-```
-
-這些檔案只能作為：
+流程：
 
 ```text
-參考資料
+閱讀 CLAUDE.md
+ ↓
+確認 Branch
+ ↓
+確認 git status
+ ↓
+閱讀相關程式
+ ↓
+分析目前架構
+ ↓
+確認 Issue 範圍
+ ↓
+實作
+ ↓
+測試
+ ↓
+git diff
+ ↓
+git diff --check
+ ↓
+git status
+ ↓
+回報結果
+ ↓
+使用者確認 Commit
+ ↓
+進入下一 Issue
 ```
 
-不得直接視為 `master` 的正式架構。
+使用者明確要求直接實作時可以直接進行。
 
-不得直接將 detached HEAD 整批複製到 `master`。
+禁止自行：
 
-使用前必須：
+```text
+Commit
+Push
+建立 PR
+```
 
-1. 分析其功能。
-2. 確認與 master 的差異。
-3. 確認哪些程式可以重用。
-4. 提出採用原因。
-5. 等待使用者確認。
+除非使用者明確要求。
 
 ---
 
-# 5. 目前 master 架構
+# 6. 修改範圍
 
-目前：
+只修改目前 Issue 必要檔案。
+
+禁止：
 
 ```text
-HTML
- │
- ▼
-Vanilla JavaScript
- │
- ▼
-localStorage
+無關重構
+無關 UI 修改
+無關 API 修改
+刪除既有功能
+修改測試預期以讓測試通過
+降低驗證條件
+一次完成多個未確認 Issue
 ```
 
-目前不是：
+需要大幅修改架構時：
 
 ```text
-React
- │
- ▼
-Node.js / Express
- │
- ▼
-PostgreSQL
-```
-
-因此後續開發必須逐步完成架構升級。
-
-目標架構：
-
-```text
-Frontend
-    │
-    │ HTTP / REST API
-    ▼
-Node.js / Express
-    │
-    │ PostgreSQL Driver
-    ▼
-PostgreSQL
-```
-
----
-
-# 6. 目前已完成的 Frontend 功能
-
-目前 `master` 已具備部分 WMS / MES Prototype：
-
-* Material 管理
-* Product 管理
-* BOM 關聯資料
-* Mold 管理
-* Work Order 建立
-* Material Stock 顯示
-* Product Stock 顯示
-* Mold Status
-* Work Order List
-* Inventory / Log 顯示
-* localStorage 資料保存
-* Material Stock 不足前端防呆
-* Mold `In_Use` 前端防呆
-
-這些功能屬於：
-
-```text
-Frontend Prototype
-```
-
-不是正式 Database Transaction。
-
----
-
-# 7. BOM 規則
-
-目前專案已採用：
-
-```text
-bomTable
-```
-
-作為 Product 與 Material 的關聯資料。
-
-目標資料模型：
-
-```text
-Product
-   │
-   ▼
-BOM
-   │
-   ├── Material
-   │
-   ├── Amount Per Unit
-   │
-   └── Mold
-```
-
-不得重新將 BOM 長期放回：
-
-```text
-product.bom
-```
-
-正式 Backend / PostgreSQL 架構必須使用獨立 BOM 關聯表。
-
-目前 `master` 若仍存在：
-
-```text
-product.bom
-```
-
-相關殘留程式碼，必須在正式修改前先分析。
-
-不得直接刪除而不確認其使用位置。
-
----
-
-# 8. Backend 建立規則
-
-因為 `master` 目前沒有正式 Backend，必須建立：
-
-```text
-Node.js
-Express
-```
-
-Backend 負責：
-
-* Authentication
-* Product API
-* Material API
-* BOM API
-* Mold API
-* Work Order API
-* Inventory API
-* Log API
-
-Frontend 不得直接操作 PostgreSQL。
-
-架構：
-
-```text
-Frontend
-   │
-   ▼
-Express API
-   │
-   ▼
-PostgreSQL
+停止
+ ↓
+說明原因
+ ↓
+等待確認
 ```
 
 ---
 
-# 9. PostgreSQL 資料模型
+# 7. Issue #1 — Database + BOM
 
-正式 Database 預計包含：
+目的：
+
+```text
+建立正式 PostgreSQL Database
++
+確認 BOM 關聯結構
+```
+
+包含：
 
 ```text
 users
@@ -313,81 +243,309 @@ inventory_transactions
 system_logs
 ```
 
-建立 Database Schema 前：
+必須建立：
 
-1. 先確認目前 frontend state。
-2. 確認每個欄位的用途。
-3. 建立 migration。
-4. 建立必要的 Primary Key。
-5. 建立 Foreign Key。
-6. 建立必要的 Unique Constraint。
-7. 建立必要的 Check Constraint。
-8. 確認 Transaction 所需欄位。
+```text
+Primary Key
+Foreign Key
+Unique Constraint
+Check Constraint
+Index
+Migration
+```
 
-禁止直接根據文件猜測目前資料欄位。
+BOM 正式使用：
+
+```text
+bom_table
+```
+
+不得重新使用：
+
+```text
+product.bom
+```
+
+正式 Database BOM：
+
+```text
+Product
+   │
+   ▼
+bom_table
+   │
+   ├── Material
+   └── Amount Per Unit
+```
+
+完成後驗證：
+
+```text
+Migration 可以執行
+Tables 正確建立
+Foreign Key 正常
+Unique Constraint 正常
+Check Constraint 正常
+BOM 關聯正常
+```
 
 ---
 
-# 10. Transaction 核心規則
+# 8. Issue #2 — Backend + Environment
 
-正式生產工單建立流程必須使用單一 PostgreSQL Transaction。
+目的：
 
-流程：
+```text
+建立完整基本 Backend API
++
+Environment Variables
+```
+
+Backend：
+
+```text
+Node.js
+Express
+pg
+```
+
+API：
+
+```text
+Materials
+Products
+BOM
+Molds
+Work Orders
+Logs
+```
+
+必要時包含：
+
+```text
+Authentication
+Inventory API
+```
+
+目前已完成的：
+
+```text
+pg.Pool
+PostgreSQL API
+Explicit SQL Columns
+Parameterized SQL
+Constraint Error Handling
+Input Validation
+Health Check
+```
+
+視為 Issue #2 已完成內容。
+
+不得重新實作。
+
+---
+
+## Issue #2 SQL 規則
+
+禁止：
+
+```sql
+SELECT *
+```
+
+禁止：
+
+```sql
+RETURNING *
+```
+
+使用明確欄位：
+
+```sql
+SELECT
+    material_id,
+    name,
+    unit,
+    stock
+FROM materials;
+```
+
+INSERT / UPDATE：
+
+```sql
+RETURNING
+    material_id,
+    name,
+    unit,
+    stock;
+```
+
+必須使用：
+
+```text
+Parameterized Query
+```
+
+禁止：
+
+```text
+String Concatenation SQL
+```
+
+---
+
+## Issue #2 PostgreSQL Error Mapping
+
+使用 PostgreSQL error code：
+
+```text
+23505 → 409
+23503 → 409
+23514 → 409
+23502 → 400
+```
+
+API 不得暴露：
+
+```text
+Stack Trace
+Database Password
+SQL Internal Details
+Filesystem Path
+```
+
+Health Check：
+
+```text
+Database OK → 200
+Database Failure → 503
+```
+
+DELETE 成功回傳明確 JSON：
+
+```json
+{
+  "deleted": true,
+  "id": "..."
+}
+```
+
+---
+
+## Issue #2 Environment
+
+至少使用：
+
+```text
+DATABASE_HOST
+DATABASE_PORT
+DATABASE_NAME
+DATABASE_USER
+DATABASE_PASSWORD
+JWT_SECRET
+```
+
+建立：
+
+```text
+.env
+.env.example
+```
+
+`.env` 不得進 Git。
+
+`.env.example` 不得包含真實密碼。
+
+禁止：
+
+```javascript
+const password = "postgres";
+```
+
+禁止：
+
+```javascript
+const JWT_SECRET = "secret";
+```
+
+---
+
+# 9. Issue #3 — Transaction + Pessimistic Lock
+
+目的：
+
+```text
+建立正式生產 Transaction
++
+Rollback
++
+Pessimistic Lock
+```
+
+生產流程：
 
 ```text
 BEGIN
-  ↓
-驗證 User
-  ↓
-驗證 Product
-  ↓
-取得 BOM
-  ↓
-鎖定 Material
-  ↓
-檢查 Material Stock
-  ↓
-鎖定 Mold
-  ↓
-檢查 Mold Status
-  ↓
-扣減 Material Stock
-  ↓
-增加 Product Stock
-  ↓
-更新 Mold Status
-  ↓
-建立 Work Order
-  ↓
-建立 Inventory Transaction
-  ↓
-建立 System Log
-  ↓
+ ↓
+Validate User
+ ↓
+Validate Product
+ ↓
+Get BOM
+ ↓
+Lock Material
+ ↓
+Check Material Stock
+ ↓
+Lock Mold
+ ↓
+Check Mold Status
+ ↓
+Deduct Material
+ ↓
+Increase Product
+ ↓
+Update Mold
+ ↓
+Create Work Order
+ ↓
+Create Inventory Transaction
+ ↓
+Create System Log
+ ↓
 COMMIT
 ```
 
-任何步驟失敗：
+任何錯誤：
 
 ```text
 ROLLBACK
 ```
 
-禁止產生部分完成狀態。
-
 ---
 
-# 11. Material Stock 規則
+# 10. Material Pessimistic Lock
 
-Material Stock 不得小於 0。
+Material 必須在 Transaction 內：
 
-需求量：
+```sql
+SELECT ...
+FROM materials
+WHERE material_id = $1
+FOR UPDATE;
+```
+
+目的：
 
 ```text
-Required Amount
-=
-BOM Amount Per Unit
-×
-Production Quantity
+防止 Material Race Condition
+防止 Stock 超賣
+```
+
+Material：
+
+```text
+stock >= 0
 ```
 
 如果：
@@ -399,67 +557,13 @@ Current Stock < Required Amount
 則：
 
 ```text
-Reject Work Order
-ROLLBACK
-```
-
-結果：
-
-```text
-Material 不扣減
-Product 不增加
-Mold 不更新
-Work Order 不建立
-```
-
----
-
-# 12. Mold 規則
-
-Mold 狀態：
-
-```text
-Idle
-In_Use
-```
-
-只有：
-
-```text
-Idle
-```
-
-可以被新的 Work Order 使用。
-
-如果：
-
-```text
-Mold = In_Use
-```
-
-則：
-
-```text
 Reject
 ROLLBACK
 ```
 
-同一個 Mold 不得同時被兩張成功 Work Order 使用。
-
 ---
 
-# 13. PostgreSQL 悲觀鎖
-
-正式生產流程使用 PostgreSQL Pessimistic Lock。
-
-Material：
-
-```sql
-SELECT ...
-FROM materials
-WHERE material_id = $1
-FOR UPDATE;
-```
+# 11. Mold Pessimistic Lock
 
 Mold：
 
@@ -470,24 +574,74 @@ WHERE mold_id = $1
 FOR UPDATE;
 ```
 
-規則：
+只有：
 
-* Lock 必須位於 Transaction 內。
-* Material 扣減前必須取得 Lock。
-* Mold 狀態修改前必須取得 Lock。
-* Commit 後 Lock 釋放。
-* Rollback 後 Lock 釋放。
-* 不得使用 JavaScript memory lock 取代 Database Lock。
-* 不得使用單機 mutex 取代 PostgreSQL Lock。
+```text
+Idle
+```
+
+可以取得。
+
+如果：
+
+```text
+In_Use
+```
+
+則：
+
+```text
+Reject
+ROLLBACK
+```
+
+禁止使用：
+
+```text
+JavaScript Mutex
+Memory Lock
+Single Machine Lock
+```
+
+取代 PostgreSQL Lock。
 
 ---
 
-# 14. PostgreSQL 樂觀鎖
+# 12. Issue #3 驗證
 
-管理型資料使用：
+至少測試：
 
 ```text
-version
+Material 不足
+Mold In_Use
+Transaction Rollback
+Material Lock
+Mold Lock
+```
+
+失敗後必須確認：
+
+```text
+Material 沒有被扣減
+Product 沒有增加
+Mold 沒有錯誤更新
+Work Order 沒有建立
+Inventory Transaction 沒有建立
+System Log 符合預期
+```
+
+---
+
+# 13. Issue #4 — Optimistic Lock + Constraint Handling
+
+目的：
+
+```text
+Version Control
++
+Concurrent Update Conflict
++
+PostgreSQL Constraint Error Handling
 ```
 
 主要資料：
@@ -499,15 +653,21 @@ bom_table
 molds
 ```
 
+加入：
+
+```text
+version
+```
+
 更新：
 
 ```sql
-UPDATE ...
+UPDATE materials
 SET
-    ...,
+    stock = $1,
     version = version + 1
-WHERE id = $1
-AND version = $2;
+WHERE material_id = $2
+AND version = $3;
 ```
 
 如果：
@@ -516,15 +676,13 @@ AND version = $2;
 affected rows = 0
 ```
 
-代表版本衝突。
-
-API：
+回傳：
 
 ```text
-HTTP 409 Conflict
+409 Conflict
 ```
 
-錯誤訊息必須明確表示：
+錯誤訊息：
 
 ```text
 資料已被其他使用者修改，請重新載入。
@@ -532,151 +690,63 @@ HTTP 409 Conflict
 
 ---
 
-# 15. Lock 分工
+# 14. Issue #4 Constraint
 
-Pessimistic Lock：
-
-```text
-生產時資源競爭
-```
-
-主要：
+PostgreSQL：
 
 ```text
-Material
-Mold
+23505 → 409
+23503 → 409
+23514 → 409
+23502 → 400
 ```
 
-Optimistic Lock：
+測試：
 
 ```text
-管理資料編輯
+Duplicate
+Foreign Key Violation
+Check Violation
+Not Null Violation
 ```
 
-主要：
-
-```text
-Material
-Product
-BOM
-Mold
-```
-
-不得將兩者混成同一個機制。
+目前已完成的 API constraint mapping 可以直接沿用。
 
 ---
 
-# 16. Authentication
+# 15. Issue #5 — Docker + Network Isolation
 
-正式系統使用 JWT。
-
-JWT Secret 必須：
+建立：
 
 ```text
-process.env.JWT_SECRET
+Frontend Container
+Backend Container
+PostgreSQL Container
 ```
 
-禁止：
-
-```javascript
-const JWT_SECRET = "secret";
-```
-
-禁止：
-
-```text
-Hardcoded Secret
-```
-
-使用者登入資訊必須由 Backend 驗證。
-
-Frontend 的 role toggle 不得視為正式 Authentication。
-
----
-
-# 17. Environment Variables
-
-敏感資訊使用：
-
-```text
-.env
-```
-
-至少包含：
-
-```text
-DATABASE_HOST
-DATABASE_PORT
-DATABASE_NAME
-DATABASE_USER
-DATABASE_PASSWORD
-JWT_SECRET
-```
-
-實際名稱依專案實作決定。
-
-必須建立：
-
-```text
-.env
-.env.example
-.gitignore
-```
-
-`.env`：
-
-```text
-禁止 Push
-```
-
-`.env.example`：
-
-```text
-只允許 Placeholder
-```
-
-禁止將真實密碼或 Secret 寫入：
-
-* JavaScript
-* JSON
-* Dockerfile
-* docker-compose.yml
-* README
-* Git
-
----
-
-# 18. Docker
-
-目標：
+執行：
 
 ```bash
 docker compose up -d
 ```
 
-啟動：
+Backend 使用 Docker Service Name：
 
 ```text
-Frontend
-Backend
-PostgreSQL
+postgres:5432
 ```
 
-Backend 使用 Docker Network 連 PostgreSQL。
-
-Container 內禁止依賴：
+禁止 Container 內依賴：
 
 ```text
 localhost:5432
 ```
 
-應使用 Docker Service Name。
-
 ---
 
-# 19. PostgreSQL Network Isolation
+# 16. PostgreSQL Network
 
-PostgreSQL 不得直接對 Host 暴露：
+PostgreSQL 不得：
 
 ```yaml
 ports:
@@ -693,27 +763,18 @@ Backend
 PostgreSQL
 ```
 
-PostgreSQL 只允許 Docker Network 內部服務連線。
+PostgreSQL 只存在 Docker Network。
 
-必須實際驗證：
-
-```text
-Backend → PostgreSQL
-```
-
-可以連線。
-
-並驗證：
+驗證：
 
 ```text
-External Host → PostgreSQL
+Backend → PostgreSQL = 成功
+External Host → PostgreSQL = 無法直接連線
 ```
-
-無法直接連線。
 
 ---
 
-# 20. Playwright E2E
+# 17. Issue #6 — Playwright E2E
 
 使用：
 
@@ -727,45 +788,44 @@ Playwright
 headless: true
 ```
 
-主要流程：
+測試：
 
 ```text
 Login
  ↓
-選擇 Product A
+選擇 Product
  ↓
-記錄 Material Before
+取得 Material Before
  ↓
-記錄 Product Before
+取得 Product Before
  ↓
-記錄 Mold Before
+取得 Mold Before
  ↓
-建立 Work Order
+Create Work Order
  ↓
-記錄 Material After
+取得 Material After
  ↓
-記錄 Product After
+取得 Product After
  ↓
-記錄 Mold After
- ↓
-驗證結果
+取得 Mold After
 ```
 
-必須驗證：
+驗證：
 
 ```text
 Material Stock 減少
 Product Stock 增加
-Mold Idle → In_Use
+Mold 狀態正確
+Work Order 建立
 ```
 
-測試必須可以重複執行。
+測試必須可重複執行。
 
 ---
 
-# 21. E2E Failure Debug
+# 18. Issue #6 Failure Debug
 
-E2E 失敗時自動產生：
+E2E 失敗時自動保存：
 
 ```text
 Screenshot
@@ -775,7 +835,7 @@ API Log
 Playwright Trace
 ```
 
-建議：
+目標：
 
 ```text
 test-results/
@@ -788,11 +848,11 @@ test-results/
         └── trace.zip
 ```
 
-不得要求使用者重新手動執行一次才能取得除錯資料。
+不得要求使用者重新執行一次才能取得除錯資料。
 
 ---
 
-# 22. Concurrent Worker
+# 19. Issue #7 — Concurrent Race Condition
 
 建立：
 
@@ -802,11 +862,19 @@ Worker B
 Worker C
 ```
 
-三個 Worker 同時生產：
+三個 Worker 必須真正同時送出 Request。
+
+禁止：
 
 ```text
-Product A
+A 完成
+ ↓
+B 完成
+ ↓
+C 完成
 ```
+
+這不算 Concurrent Test。
 
 共同競爭：
 
@@ -815,28 +883,11 @@ Material X
 Mold Y
 ```
 
-必須建立真正的並發 Request。
-
-不得使用：
-
-```text
-A 完成 → B → 完成 → C
-```
-
-取代並發測試。
-
 ---
 
-# 23. 三產線預期結果
+# 20. Concurrent 預期結果
 
-假設：
-
-```text
-Mold Y = 1
-Material X = 有限
-```
-
-三個 Worker 同時建立工單：
+每輪：
 
 ```text
 Worker A → SUCCESS
@@ -851,32 +902,17 @@ SUCCESS = 1
 REJECT = 2
 ```
 
-成功：
-
-```text
-Material 正確扣減
-Product 正確增加
-Mold = In_Use
-Work Order 建立
-```
-
-失敗：
-
-```text
-Transaction ROLLBACK
-```
-
----
-
-# 24. Concurrent 驗收
-
-至少執行：
+至少：
 
 ```text
 5 rounds
 ```
 
 每輪重新初始化測試資料。
+
+---
+
+# 21. Concurrent 驗收
 
 每輪確認：
 
@@ -896,403 +932,18 @@ Material Stock >= 0
 ```
 
 ```text
-Product Stock 只增加成功工單數量
+Product Stock 只增加成功工單對應數量
 ```
 
 ```text
-失敗 Transaction 沒有殘留資料
+Failed Transaction 沒有殘留資料
 ```
 
 ---
 
-# 25. 開發 Issue 順序
+# 22. 測試規則
 
-因為目前 `master` 尚未具備 Backend / PostgreSQL，所以正式順序：
-
-```text
-#0  Master BOM 結構修正
- ↓
-#1  PostgreSQL Schema / Migration
- ↓
-#2  Node.js / Express Backend API
- ↓
-#20 Environment Variables
- ↓
-#16 PostgreSQL Transaction + 悲觀鎖
- ↓
-#17 PostgreSQL 樂觀鎖
- ↓
-#18 Transaction / Lock Test
- ↓
-#19 Docker Compose
- ↓
-#21 PostgreSQL Network Isolation
- ↓
-#22 Playwright E2E
- ↓
-#23 E2E Failure Debug
- ↓
-#24 三產線高並發 Race Condition
-```
-
-`#0～#2` 為前置架構任務。
-
-原有 #16～#24 編號保持不變。
-
----
-
-# 26. Issue #0 — 修正 Master BOM 結構
-
-目的：
-
-確認 `master` 前端已完全使用：
-
-```text
-bomTable
-```
-
-處理目前仍存在的：
-
-```text
-product.bom
-```
-
-相關殘留邏輯。
-
-例如：
-
-```text
-getDerivedProduct()
-deleteMaterial()
-```
-
-修改前必須先完整搜尋：
-
-```text
-product.bom
-p.bom
-```
-
-確認所有使用位置。
-
-不得直接刪除欄位而造成其他功能失效。
-
-完成後必須測試：
-
-* Product 顯示
-* BOM
-* Material
-* Work Order
-* Material Delete
-* Product Delete
-
----
-
-# 27. Issue #1 — PostgreSQL Schema / Migration
-
-建立正式 PostgreSQL Database Schema。
-
-包含：
-
-```text
-users
-materials
-products
-bom_table
-molds
-work_orders
-inventory_transactions
-system_logs
-```
-
-必須：
-
-* Primary Key
-* Foreign Key
-* Unique Constraint
-* Check Constraint
-* 必要 Index
-* Migration
-
-此階段先建立正確 Database Model。
-
----
-
-# 28. Issue #2 — Backend API
-
-建立：
-
-```text
-Node.js
-Express
-PostgreSQL Driver
-```
-
-API 至少涵蓋：
-
-```text
-Authentication
-Products
-Materials
-BOM
-Molds
-Work Orders
-Inventory
-Logs
-```
-
-Frontend 逐步從：
-
-```text
-localStorage
-```
-
-轉換成：
-
-```text
-REST API
-```
-
-此階段先完成基本 CRUD 與資料流。
-
-正式 Transaction / Lock 由 #16 處理。
-
----
-
-# 29. Issue #20 — Environment Variables
-
-建立：
-
-```text
-.env
-.env.example
-.gitignore
-```
-
-所有 Database 與 JWT Secret 改由 Environment Variables 取得。
-
----
-
-# 30. Issue #16 — Transaction + Pessimistic Lock
-
-實作：
-
-```text
-PostgreSQL Transaction
-+
-SELECT ... FOR UPDATE
-+
-Rollback
-```
-
-驗證：
-
-* Material 不足
-* Mold In_Use
-* Material Race
-* Mold Race
-
----
-
-# 31. Issue #17 — Optimistic Lock
-
-加入：
-
-```text
-version
-```
-
-處理：
-
-```text
-Material
-Product
-BOM
-Mold
-```
-
-Version Conflict：
-
-```text
-409 Conflict
-```
-
----
-
-# 32. Issue #18 — Lock / Transaction Test
-
-建立：
-
-* Transaction Rollback Test
-* Material Concurrent Test
-* Mold Concurrent Test
-* Optimistic Lock Conflict Test
-* Pessimistic Lock Test
-* Negative Stock Test
-* Duplicate Mold Test
-
-所有測試必須實際執行。
-
----
-
-# 33. Issue #19 — Docker Compose
-
-建立：
-
-```text
-Frontend
-Backend
-PostgreSQL
-```
-
-支援：
-
-```bash
-docker compose up -d
-```
-
----
-
-# 34. Issue #21 — PostgreSQL Network Isolation
-
-確認：
-
-```text
-PostgreSQL 不暴露 Host Port
-```
-
-Backend 可以正常連線。
-
-External Host 不可直接連 PostgreSQL。
-
----
-
-# 35. Issue #22 — Playwright E2E
-
-建立完整工單 E2E：
-
-```text
-Login
-→ Product A
-→ Create Work Order
-→ Material Validation
-→ Product Validation
-→ Mold Validation
-```
-
----
-
-# 36. Issue #23 — E2E Failure Debug
-
-失敗自動產生：
-
-```text
-Screenshot
-HTML
-Console Log
-API Log
-Trace
-```
-
----
-
-# 37. Issue #24 — 三產線 Race Condition
-
-建立：
-
-```text
-Worker A
-Worker B
-Worker C
-```
-
-同時搶：
-
-```text
-Material X
-Mold Y
-```
-
-預期：
-
-```text
-1 SUCCESS
-2 REJECT
-```
-
-至少執行：
-
-```text
-5 rounds
-```
-
-確認資料一致性。
-
----
-
-# 38. 修改前流程
-
-每一個 Issue：
-
-```text
-閱讀 CLAUDE.md
- ↓
-確認 Git Branch
- ↓
-確認 git status
- ↓
-閱讀相關程式
- ↓
-分析目前架構
- ↓
-提出實作計畫
- ↓
-等待使用者確認
- ↓
-修改
- ↓
-測試
- ↓
-git diff
- ↓
-回報結果
-```
-
-如果使用者沒有明確要求直接修改：
-
-```text
-只提供實作計畫
-```
-
----
-
-# 39. 修改範圍
-
-只修改目前 Issue 必要檔案。
-
-禁止：
-
-* 無關重構
-* 無關 UI 修改
-* 無關 API 修改
-* 刪除既有功能
-* 為測試通過而修改測試預期
-* 為測試通過而降低驗證條件
-* 一次執行多個未確認 Issue
-
-如果需要大幅修改架構：
-
-```text
-先停止
-先回報
-等待確認
-```
-
----
-
-# 40. 測試規則
-
-完成後必須實際執行測試。
+每個 Issue 完成後必須實際測試。
 
 禁止只回報：
 
@@ -1324,7 +975,29 @@ Round 5
 
 ---
 
-# 41. Git Commit 規則
+# 23. Git 驗證
+
+完成後執行：
+
+```bash
+git status
+git diff --check
+git diff --stat
+git diff
+```
+
+確認：
+
+```text
+只有目前 Issue 必要檔案
+沒有 Secret
+沒有 .env
+沒有無關修改
+```
+
+---
+
+# 24. Commit 規則
 
 除非使用者明確要求：
 
@@ -1343,104 +1016,219 @@ Commit 格式：
 例如：
 
 ```text
-feat: 建立 PostgreSQL 資料模型 (#1)
+feat: 建立 PostgreSQL 資料模型與 BOM 結構 (#1)
 ```
 
 ```text
-feat: 建立 Node.js Express Backend API (#2)
+feat: 建立 Express Backend API 與環境變數管理 (#2)
 ```
 
 ```text
-feat: 實作 PostgreSQL 悲觀鎖機制 (#16)
+feat: 實作 PostgreSQL Transaction 與悲觀鎖 (#3)
 ```
 
 ```text
-test: 新增三產線高並發 Race Condition 測試 (#24)
+feat: 實作 Optimistic Lock 與 Constraint Error Handling (#4)
+```
+
+```text
+feat: 建立 Docker Compose 與 PostgreSQL Network Isolation (#5)
+```
+
+```text
+test: 建立 Playwright 生產工單 E2E 測試 (#6)
+```
+
+```text
+test: 建立三 Worker Race Condition 並發測試 (#7)
 ```
 
 ---
 
-# 42. 最終驗收
+# 25. 禁止事項
 
-## Frontend
+禁止：
 
-* [ ] BOM 使用 bomTable
-* [ ] 不再依賴 product.bom
-* [ ] Work Order 正常
-* [ ] Material 正常
-* [ ] Product 正常
-* [ ] Mold 正常
+```text
+SQLite
+```
 
-## Backend
+禁止使用：
 
-* [ ] Express API
-* [ ] Authentication
-* [ ] Product API
-* [ ] Material API
-* [ ] BOM API
-* [ ] Mold API
-* [ ] Work Order API
-* [ ] Inventory API
-* [ ] Log API
+```text
+JavaScript Memory Lock
+```
 
-## PostgreSQL
+取代 PostgreSQL Lock。
+
+禁止：
+
+```text
+Hardcoded Database Password
+```
+
+禁止：
+
+```text
+Hardcoded JWT Secret
+```
+
+禁止：
+
+```text
+SELECT *
+```
+
+禁止：
+
+```text
+RETURNING *
+```
+
+禁止：
+
+```text
+Frontend 直接連 PostgreSQL
+```
+
+禁止：
+
+```text
+PostgreSQL Host Port 直接暴露
+```
+
+禁止：
+
+```text
+假並發測試
+```
+
+禁止：
+
+```text
+為了測試通過而降低驗證條件
+```
+
+禁止：
+
+```text
+為了測試通過而修改預期結果
+```
+
+---
+
+# 26. 最終開發順序
+
+```text
+Issue #1
+Database + BOM
+        ↓
+Issue #2
+Backend + Environment
+        ↓
+Issue #3
+Transaction + Pessimistic Lock
+        ↓
+Issue #4
+Optimistic Lock + Constraint Handling
+        ↓
+Issue #5
+Docker + Network Isolation
+        ↓
+Issue #6
+Playwright E2E
+        ↓
+Issue #7
+Concurrent Race Condition
+```
+
+---
+
+# 27. 最終驗收
+
+## Database
 
 * [ ] Schema
 * [ ] Migration
+* [ ] Primary Key
 * [ ] Foreign Key
-* [ ] Constraint
-* [ ] Transaction
-* [ ] Rollback
-* [ ] Pessimistic Lock
-* [ ] Optimistic Lock
+* [ ] Unique
+* [ ] Check
+* [ ] Index
+* [ ] BOM 關聯
 
-## Security
+## Backend
 
-* [ ] `.env`
-* [ ] `.env.example`
-* [ ] `.gitignore`
-* [ ] JWT Secret 不寫死
-* [ ] DB Password 不寫死
-* [ ] `.env` 未 Push
+* [ ] Express
+* [ ] pg.Pool
+* [ ] Environment Variables
+* [ ] Materials API
+* [ ] Products API
+* [ ] BOM API
+* [ ] Molds API
+* [ ] Work Orders API
+* [ ] Logs API
+* [ ] Constraint Error Handling
+
+## Transaction
+
+* [ ] BEGIN
+* [ ] COMMIT
+* [ ] ROLLBACK
+* [ ] Material `FOR UPDATE`
+* [ ] Mold `FOR UPDATE`
+* [ ] Material 不足 Rollback
+* [ ] Mold In_Use Rollback
+
+## Optimistic Lock
+
+* [ ] version
+* [ ] Material
+* [ ] Product
+* [ ] BOM
+* [ ] Mold
+* [ ] 409 Conflict
 
 ## Docker
 
-* [ ] Frontend Container
-* [ ] Backend Container
-* [ ] PostgreSQL Container
+* [ ] Frontend
+* [ ] Backend
+* [ ] PostgreSQL
 * [ ] Docker Network
 * [ ] PostgreSQL 不暴露 Host Port
 
 ## E2E
 
 * [ ] Playwright
-* [ ] headless
+* [ ] Headless
 * [ ] Login
 * [ ] Work Order
-* [ ] Material 驗證
-* [ ] Product 驗證
-* [ ] Mold 驗證
+* [ ] Material
+* [ ] Product
+* [ ] Mold
 * [ ] Screenshot
-* [ ] HTML Snapshot
+* [ ] HTML
 * [ ] Console Log
 * [ ] API Log
 * [ ] Trace
 
 ## Concurrent
 
-* [ ] 3 Worker
-* [ ] 同時 Request
+* [ ] Worker A
+* [ ] Worker B
+* [ ] Worker C
+* [ ] 真正並發 Request
 * [ ] 1 SUCCESS
 * [ ] 2 REJECT
+* [ ] 5 rounds
 * [ ] Material 不為負數
 * [ ] Mold 不重複使用
 * [ ] Product Stock 正確
-* [ ] Transaction 完整 Rollback
-* [ ] 5 rounds 穩定通過
+* [ ] Failed Transaction 完整 Rollback
 
 ---
 
-# 43. 最終目標架構
+# 28. 最終目標
 
 ```text
                          ┌────────────────────┐
@@ -1449,7 +1237,7 @@ test: 新增三產線高並發 Race Condition 測試 (#24)
                                    │
                                    ▼
 ┌─────────────────┐       ┌────────────────────┐
-│ React / Frontend│ ────► │ Node.js / Express  │
+│    Frontend     │──────►│ Node.js / Express  │
 └─────────────────┘       └─────────┬──────────┘
                                     │
                                     ▼
@@ -1457,16 +1245,14 @@ test: 新增三產線高並發 Race Condition 測試 (#24)
                          │    PostgreSQL      │
                          │                    │
                          │ Transaction        │
+                         │ Rollback           │
                          │ Pessimistic Lock   │
                          │ Optimistic Lock    │
-                         │ Rollback            │
                          └─────────┬──────────┘
                                    │
-                    ┌──────────────┴──────────────┐
-                    │                             │
-               Worker A                       Worker B
-                    │                             │
-                    └────────── Worker C ─────────┘
+                    ┌──────────────┼──────────────┐
+                    │              │              │
+                Worker A       Worker B       Worker C
 ```
 
 最終必須證明：

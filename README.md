@@ -2,7 +2,7 @@
 
 `practice_project2` 是一個 WMS + MES 生產管理系統練習專案，用於模擬製造現場的產品、材料、BOM、模具、庫存與生產工單管理。
 
-專案目前由前端 Prototype 開始，後續逐步建立：
+專案從 Frontend Prototype 開始，逐步建立：
 
 ```text
 Frontend
@@ -12,16 +12,18 @@ Node.js / Express API
 PostgreSQL
 ```
 
-並加入：
+最終加入：
 
-* PostgreSQL Transaction
-* Rollback
-* 悲觀鎖
-* 樂觀鎖
-* Docker
-* Playwright E2E
-* Race Condition
-* 多產線高並發測試
+```text
+PostgreSQL Transaction
+Rollback
+Pessimistic Lock
+Optimistic Lock
+Docker
+Playwright E2E
+Concurrent Worker
+Race Condition Test
+```
 
 ---
 
@@ -33,7 +35,7 @@ Repository：
 https://github.com/yellowhite036/practice_project2
 ```
 
-主要開發 Branch：
+主要 Branch：
 
 ```text
 master
@@ -41,50 +43,53 @@ master
 
 ---
 
-# 2. 目前專案狀態
+# 2. 專案目標
 
-目前 `master` 為前端 Prototype。
+建立一套具有資料一致性與並發控制能力的 WMS + MES 練習系統。
 
-目前主要檔案：
-
-```text
-README.md
-CLAUDE.md
-index.html
-app.js
-styles.css
-```
-
-目前前端使用：
+最終架構：
 
 ```text
-HTML
-CSS
-Vanilla JavaScript
-localStorage
-```
-
-目前尚未完成：
-
-```text
-Node.js / Express Backend
-PostgreSQL
-Database Migration
-PostgreSQL Transaction
-Pessimistic Lock
-Optimistic Lock
-JWT Authentication
-Docker
-Playwright E2E
-Concurrent Worker
-Race Condition Test
+┌────────────────────┐
+│      Frontend      │
+│                    │
+│ Product            │
+│ Material           │
+│ BOM                │
+│ Mold               │
+│ Work Order         │
+└─────────┬──────────┘
+          │ REST API
+          ▼
+┌────────────────────┐
+│ Node.js / Express  │
+│                    │
+│ Authentication     │
+│ Product API        │
+│ Material API       │
+│ BOM API            │
+│ Mold API           │
+│ Work Order API     │
+│ Inventory API      │
+│ Log API            │
+└─────────┬──────────┘
+          │
+          ▼
+┌────────────────────┐
+│     PostgreSQL     │
+│                    │
+│ Transaction        │
+│ Rollback           │
+│ Pessimistic Lock   │
+│ Optimistic Lock    │
+└────────────────────┘
 ```
 
 ---
 
-# 3. 已完成功能
+# 3. 目前功能
 
-目前前端 Prototype 已提供：
+Frontend Prototype 已具備：
 
 * Material 管理
 * Product 管理
@@ -102,93 +107,61 @@ Race Condition Test
 * 生產後 Product Stock 增加
 * 生產後 Mold 狀態更新
 
-這些功能目前屬於：
+Backend 已逐步建立：
 
 ```text
-Frontend Simulation
+Node.js
+Express
+PostgreSQL
+pg.Pool
+REST API
+PostgreSQL Constraint Error Handling
 ```
 
-尚未具備正式 Database Transaction。
+目前 API 已具備：
 
----
+* Health Check
+* Materials API
+* Products API
+* Molds API
+* BOM API
+* Work Orders API
+* Logs API
+* PostgreSQL constraint error mapping
+* 明確 SQL 欄位
+* Parameterized SQL
+* API input validation
 
-# 4. 目前 Frontend 架構
+目前已驗證：
 
 ```text
-┌──────────────────────┐
-│      index.html      │
-└──────────┬───────────┘
-           │
-           ▼
-┌──────────────────────┐
-│       app.js         │
-│                      │
-│ Product              │
-│ Material             │
-│ BOM                  │
-│ Mold                 │
-│ Work Order           │
-│ Inventory            │
-│ Logs                 │
-└──────────┬───────────┘
-           │
-           ▼
-      localStorage
+npm test
+10 tests
+10 passed
+0 failed
 ```
 
-目前資料主要存在瀏覽器端。
-
----
-
-# 5. 目標架構
-
-完成後：
+目前 PostgreSQL API 已實際測試：
 
 ```text
-┌──────────────────────┐
-│ Frontend             │
-│                      │
-│ Login                │
-│ Product              │
-│ Material             │
-│ BOM                  │
-│ Mold                 │
-│ Work Order           │
-└──────────┬───────────┘
-           │ REST API
-           ▼
-┌──────────────────────┐
-│ Node.js / Express    │
-│                      │
-│ Authentication       │
-│ Product API          │
-│ Material API         │
-│ BOM API              │
-│ Mold API              │
-│ Work Order API       │
-│ Inventory API         │
-└──────────┬───────────┘
-           │
-           ▼
-┌──────────────────────┐
-│ PostgreSQL           │
-│                      │
-│ users                │
-│ materials            │
-│ products             │
-│ bom_table            │
-│ molds                │
-│ work_orders          │
-│ inventory_transactions│
-│ system_logs          │
-└──────────────────────┘
+GET /api/health
+POST /api/materials
+GET /api/materials
+```
+
+並驗證：
+
+```text
+Invalid stock → 400
+Duplicate material → 409
+Database health failure → 503
 ```
 
 ---
 
-# 6. Database 資料模型
+# 4. Database 資料模型
 
-目標建立：
+正式 Database：
 
 ```text
 users
@@ -201,7 +174,7 @@ inventory_transactions
 system_logs
 ```
 
-BOM 使用獨立關聯表。
+BOM 使用獨立關聯表：
 
 ```text
 Product
@@ -210,202 +183,53 @@ Product
 bom_table
    │
    ├── Material
-   ├── Amount Per Unit
-   └── Mold
+   └── Amount Per Unit
 ```
 
-不再以：
+正式 Database 不使用：
 
 ```text
 product.bom
 ```
 
-作為正式 Database BOM 結構。
+作為 BOM 儲存結構。
 
 ---
 
-# 7. 生產工單流程
+# 5. Material
 
-正式 Backend 完成後：
-
-```text
-Login
-  ↓
-選擇 Product
-  ↓
-取得 BOM
-  ↓
-計算 Material Requirement
-  ↓
-鎖定 Material
-  ↓
-檢查 Material Stock
-  ↓
-鎖定 Mold
-  ↓
-檢查 Mold Status
-  ↓
-扣減 Material
-  ↓
-增加 Product Stock
-  ↓
-更新 Mold
-  ↓
-建立 Work Order
-  ↓
-建立 Inventory Transaction
-  ↓
-建立 System Log
-  ↓
-COMMIT
-```
-
-整個流程使用單一 PostgreSQL Transaction。
-
----
-
-# 8. Transaction / Rollback
-
-任何生產流程錯誤：
+主要欄位：
 
 ```text
-ROLLBACK
-```
-
-例如：
-
-```text
-Material Stock 不足
-```
-
-結果：
-
-```text
-Material 不扣減
-Product 不增加
-Mold 不更新
-Work Order 不建立
-```
-
-如果：
-
-```text
-Mold = In_Use
-```
-
-同樣：
-
-```text
-ROLLBACK
-```
-
-禁止出現：
-
-```text
-Material 已扣減
-+
-Mold 取得失敗
-```
-
-這類部分完成狀態。
-
----
-
-# 9. 悲觀鎖
-
-生產工單使用 PostgreSQL Pessimistic Lock。
-
-Material：
-
-```sql
-SELECT ...
-FROM materials
-WHERE material_id = $1
-FOR UPDATE;
-```
-
-Mold：
-
-```sql
-SELECT ...
-FROM molds
-WHERE mold_id = $1
-FOR UPDATE;
-```
-
-用途：
-
-```text
-Material
-↓
-防止超賣
-
-Mold
-↓
-防止同一模具被多條產線同時取得
-```
-
----
-
-# 10. 樂觀鎖
-
-管理型資料加入：
-
-```text
+material_id
+name
+unit
+stock
+capacity
+safety_stock
+location
 version
 ```
 
-適用：
+規則：
 
 ```text
-materials
-products
-bom_table
-molds
+stock >= 0
+capacity >= 0
+safety_stock >= 0
 ```
 
-更新時：
-
-```sql
-UPDATE ...
-SET version = version + 1
-WHERE id = $1
-AND version = $2;
-```
-
-如果更新筆數為：
+生產需求：
 
 ```text
-0
-```
-
-代表版本衝突。
-
-API 回傳：
-
-```text
-409 Conflict
-```
-
----
-
-# 11. Material 規則
-
-Material Stock 不得小於：
-
-```text
-0
-```
-
-需求量：
-
-```text
-BOM Amount Per Unit
+Required Amount
+=
+Amount Per Unit
 ×
 Production Quantity
 ```
 
-如果庫存不足：
+Material 不足時：
 
 ```text
 Reject
@@ -421,9 +245,51 @@ Stock < 0
 
 ---
 
-# 12. Mold 規則
+# 6. Product
 
-Mold 狀態：
+主要欄位：
+
+```text
+product_id
+name
+cycle_minutes
+mold_id
+stock
+version
+```
+
+規則：
+
+```text
+cycle_minutes > 0
+stock >= 0
+```
+
+Product 與 Mold 使用 Foreign Key：
+
+```text
+products.mold_id
+        ↓
+molds.mold_id
+```
+
+---
+
+# 7. Mold
+
+主要欄位：
+
+```text
+mold_id
+name
+status
+line
+eta
+product_id
+version
+```
+
+狀態：
 
 ```text
 Idle
@@ -436,29 +302,243 @@ In_Use
 Idle
 ```
 
-可以被新的工單取得。
-
-如果：
-
-```text
-In_Use
-```
-
-則拒絕新的生產工單。
-
-同一 Mold 不得同時被兩張成功 Work Order 使用。
+可以被新的生產工單取得。
 
 ---
 
-# 13. Environment Variables
+# 8. BOM
 
-正式架構使用：
+主要欄位：
+
+```text
+bom_id
+product_id
+material_id
+amount_per_unit
+version
+```
+
+Constraint：
+
+```text
+(product_id, material_id) UNIQUE
+amount_per_unit > 0
+```
+
+Product 與 Material：
+
+```text
+products
+   │
+   ▼
+bom_table
+   │
+   ▼
+materials
+```
+
+---
+
+# 9. Work Order
+
+主要欄位：
+
+```text
+work_order_id
+product_id
+quantity
+line
+mold_id
+status
+creator_user_id
+creator_name
+```
+
+正式生產流程：
+
+```text
+建立 Work Order
+        ↓
+取得 BOM
+        ↓
+計算 Material Requirement
+        ↓
+鎖定 Material
+        ↓
+檢查 Stock
+        ↓
+鎖定 Mold
+        ↓
+檢查 Mold Status
+        ↓
+扣減 Material
+        ↓
+增加 Product Stock
+        ↓
+更新 Mold
+        ↓
+建立 Work Order
+        ↓
+建立 Inventory Transaction
+        ↓
+建立 System Log
+        ↓
+COMMIT
+```
+
+---
+
+# 10. Transaction
+
+整個生產流程使用單一 PostgreSQL Transaction：
+
+```text
+BEGIN
+  ↓
+Lock
+  ↓
+Validate
+  ↓
+Update
+  ↓
+Insert
+  ↓
+COMMIT
+```
+
+任何錯誤：
+
+```text
+ROLLBACK
+```
+
+例如 Material 不足：
+
+```text
+Material 不扣減
+Product 不增加
+Mold 不更新
+Work Order 不建立
+```
+
+---
+
+# 11. Pessimistic Lock
+
+生產時使用 PostgreSQL：
+
+```sql
+SELECT ...
+FROM materials
+WHERE material_id = $1
+FOR UPDATE;
+```
+
+以及：
+
+```sql
+SELECT ...
+FROM molds
+WHERE mold_id = $1
+FOR UPDATE;
+```
+
+用途：
+
+```text
+Material
+→ 防止超賣
+
+Mold
+→ 防止同一模具被多個 Worker 同時取得
+```
+
+Lock 必須存在於 PostgreSQL Transaction 中。
+
+---
+
+# 12. Optimistic Lock
+
+管理型資料使用：
+
+```text
+version
+```
+
+主要資料：
+
+```text
+materials
+products
+bom_table
+molds
+```
+
+更新時：
+
+```text
+WHERE id = ?
+AND version = ?
+```
+
+成功：
+
+```text
+version + 1
+```
+
+如果更新筆數：
+
+```text
+0
+```
+
+代表版本衝突：
+
+```text
+HTTP 409 Conflict
+```
+
+---
+
+# 13. API Error Handling
+
+PostgreSQL Constraint Error：
+
+```text
+23505 → 409 Conflict
+23503 → 409 Conflict
+23514 → 409 Conflict
+23502 → 400 Bad Request
+```
+
+API 不回傳：
+
+```text
+database stack trace
+SQL details
+internal path
+```
+
+Health Check：
+
+```text
+Database OK → 200
+Database failure → 503
+```
+
+---
+
+# 14. Environment Variables
+
+使用：
 
 ```text
 .env
+.env.example
 ```
 
-管理：
+至少包含：
 
 ```text
 DATABASE_HOST
@@ -469,37 +549,23 @@ DATABASE_PASSWORD
 JWT_SECRET
 ```
 
-建立：
+`.env`：
 
 ```text
-.env
-.env.example
-.gitignore
+禁止進入 Git
 ```
 
-`.env` 不得 Push 到 Git。
-
-`.env.example` 不放真實密碼。
-
----
-
-# 14. Authentication
-
-正式 Backend 使用 JWT。
-
-JWT Secret 使用：
+`.env.example`：
 
 ```text
-process.env.JWT_SECRET
+只放 Placeholder
 ```
-
-禁止將 JWT Secret 寫死在程式碼。
 
 ---
 
 # 15. Docker
 
-目標使用：
+最終使用：
 
 ```bash
 docker compose up -d
@@ -513,7 +579,7 @@ Backend
 PostgreSQL
 ```
 
-Container 架構：
+Docker Network：
 
 ```text
 Frontend
@@ -523,78 +589,47 @@ Backend
 PostgreSQL
 ```
 
-Backend 透過 Docker Network 連 PostgreSQL。
-
----
-
-# 16. PostgreSQL Network Isolation
-
-PostgreSQL 不對 Host 暴露：
+PostgreSQL 不直接暴露：
 
 ```text
 5432
 ```
 
-禁止：
-
-```yaml
-ports:
-  - "5432:5432"
-```
-
-目標：
-
-```text
-Docker Network
-      │
-      ├── Frontend
-      ├── Backend
-      └── PostgreSQL
-```
-
-外部電腦不能直接連 PostgreSQL。
-
 ---
 
-# 17. Playwright E2E
-
-使用 Playwright。
+# 16. Playwright E2E
 
 測試：
 
 ```text
 Login
  ↓
-Product A
+Product
+ ↓
+Material Before
+ ↓
+Product Before
+ ↓
+Mold Before
  ↓
 Create Work Order
  ↓
-Material Before / After
+Material After
  ↓
-Product Before / After
+Product After
  ↓
-Mold Before / After
+Mold After
 ```
 
-確認：
+驗證：
 
 ```text
 Material Stock 減少
 Product Stock 增加
-Mold Idle → In_Use
+Mold 狀態正確
 ```
 
-執行：
-
-```text
-headless: true
-```
-
----
-
-# 18. E2E 失敗除錯
-
-測試失敗時自動保存：
+失敗時保存：
 
 ```text
 Screenshot
@@ -604,22 +639,9 @@ API Log
 Playwright Trace
 ```
 
-例如：
-
-```text
-test-results/
-└── work-order/
-    └── timestamp/
-        ├── screenshot.png
-        ├── page.html
-        ├── console.log
-        ├── api.log
-        └── trace.zip
-```
-
 ---
 
-# 19. 三產線高並發
+# 17. Concurrent Race Condition
 
 建立：
 
@@ -629,13 +651,7 @@ Worker B
 Worker C
 ```
 
-三個 Worker 同時生產：
-
-```text
-Product A
-```
-
-同時爭奪：
+三個 Worker 同時競爭：
 
 ```text
 Material X
@@ -650,18 +666,12 @@ Worker B → REJECT
 Worker C → REJECT
 ```
 
-結果：
+每輪：
 
 ```text
-1 SUCCESS
-2 REJECT
+SUCCESS = 1
+REJECT = 2
 ```
-
-失敗 Worker 必須完整 Rollback。
-
----
-
-# 20. Race Condition 驗證
 
 至少執行：
 
@@ -669,213 +679,113 @@ Worker C → REJECT
 5 rounds
 ```
 
-每輪確認：
-
-```text
-SUCCESS = 1
-REJECT = 2
-```
-
-並確認：
+驗證：
 
 ```text
 Material Stock >= 0
-```
-
-```text
-Mold Y
-不得同時被多張成功工單使用
-```
-
-```text
-Product Stock
-只增加成功工單對應數量
-```
-
-```text
-Failed Transaction
-不得留下異動
+Mold 不被同時使用
+Product Stock 正確
+Failed Transaction 完整 Rollback
 ```
 
 ---
 
-# 21. 開發階段
+# 18. 七階段 Issue
 
-目前開發順序：
+專案正式開發縮減為 7 個 Issue：
+
+| Issue | 名稱                                    | 主要內容                                 |
+| ----- | ------------------------------------- | ------------------------------------ |
+| #1    | Database + BOM                        | BOM、Schema、Migration、Constraints     |
+| #2    | Backend + Environment                 | Express、API、pg、Environment Variables |
+| #3    | Transaction + Pessimistic Lock        | Transaction、Rollback、FOR UPDATE      |
+| #4    | Optimistic Lock + Constraint Handling | Version、409、DB Error Mapping         |
+| #5    | Docker + Network Isolation            | Compose、Network、PostgreSQL Isolation |
+| #6    | Playwright E2E                        | 完整工單流程與失敗除錯                          |
+| #7    | Concurrent Race Condition             | 3 Worker、並發、5 rounds                 |
+
+---
+
+# 19. Issue 開發順序
 
 ```text
-#0  Master BOM 結構修正
+#1 Database + BOM
+        ↓
+#2 Backend + Environment
+        ↓
+#3 Transaction + Pessimistic Lock
+        ↓
+#4 Optimistic Lock + Constraint Handling
+        ↓
+#5 Docker + Network Isolation
+        ↓
+#6 Playwright E2E
+        ↓
+#7 Concurrent Race Condition
+```
+
+每個 Issue 完成後：
+
+```text
+測試
  ↓
-#1  PostgreSQL Schema / Migration
+git diff
  ↓
-#2  Node.js / Express Backend API
+git status
  ↓
-#20 Environment Variables
+確認修改範圍
  ↓
-#16 Transaction + Pessimistic Lock
+Commit
  ↓
-#17 Optimistic Lock
- ↓
-#18 Lock / Transaction Test
- ↓
-#19 Docker Compose
- ↓
-#21 PostgreSQL Network Isolation
- ↓
-#22 Playwright E2E
- ↓
-#23 E2E Failure Debug
- ↓
-#24 三產線高並發 Race Condition
+進入下一個 Issue
 ```
 
 ---
 
-# 22. Issue 清單
+# 20. 最終驗收
 
-| Issue | 內容                            | 狀態  |
-| ----- | ----------------------------- | --- |
-| #0    | Master BOM 結構修正               | 待完成 |
-| #1    | PostgreSQL Schema / Migration | 待完成 |
-| #2    | Node.js / Express Backend API | 待完成 |
-| #20   | Environment Variables         | 待完成 |
-| #16   | PostgreSQL Transaction + 悲觀鎖  | 待完成 |
-| #17   | PostgreSQL 樂觀鎖                | 待完成 |
-| #18   | Lock / Transaction Test       | 待完成 |
-| #19   | Docker Compose                | 待完成 |
-| #21   | PostgreSQL Network Isolation  | 待完成 |
-| #22   | Playwright E2E                | 待完成 |
-| #23   | E2E Failure Debug             | 待完成 |
-| #24   | 三產線 Race Condition            | 待完成 |
+## Database
 
----
-
-# 23. 測試架構
-
-## Unit Test
-
-測試：
-
-* BOM 計算
-* Material Requirement
-* Stock Validation
-* Version Conflict
-* Work Order Validation
-
-## Integration Test
-
-測試：
-
-* PostgreSQL
-* Transaction
-* Rollback
-* Pessimistic Lock
-* Optimistic Lock
-* Database Constraint
-
-## E2E
-
-使用：
-
-```text
-Playwright
-```
-
-測試：
-
-* Login
-* Product
-* Work Order
-* Material
-* Product Stock
-* Mold
-
-## Concurrent Test
-
-使用：
-
-```text
-Worker A
-Worker B
-Worker C
-```
-
-測試：
-
-* Material Race Condition
-* Mold Race Condition
-* Transaction Isolation
-* Rollback
-* Multiple Production Lines
-
----
-
-# 24. 開發規範
-
-詳細開發規範請參考：
-
-```text
-CLAUDE.md
-```
-
-主要規範：
-
-* Git Branch
-* 工作區安全
-* Backend
-* PostgreSQL
-* Transaction
-* Pessimistic Lock
-* Optimistic Lock
-* Docker
-* E2E
-* Concurrent Test
-* Git Commit
-
----
-
-# 25. 最終驗收 Checklist
-
-## Frontend
-
-* [ ] BOM 使用 `bomTable`
-* [ ] 不再依賴 `product.bom`
-* [ ] Work Order 正常
-* [ ] Material 正常
-* [ ] Product 正常
-* [ ] Mold 正常
+* [ ] Schema
+* [ ] Migration
+* [ ] Primary Key
+* [ ] Foreign Key
+* [ ] Unique Constraint
+* [ ] Check Constraint
+* [ ] Index
+* [ ] BOM 關聯正常
 
 ## Backend
 
-* [ ] Express API
-* [ ] Authentication
+* [ ] Express
+* [ ] PostgreSQL
 * [ ] Product API
 * [ ] Material API
 * [ ] BOM API
 * [ ] Mold API
 * [ ] Work Order API
-* [ ] Inventory API
 * [ ] Log API
+* [ ] Environment Variables
 
-## PostgreSQL
+## Transaction
 
-* [ ] Database Schema
-* [ ] Migration
-* [ ] Foreign Key
-* [ ] Constraints
-* [ ] Transaction
-* [ ] Rollback
-* [ ] Pessimistic Lock
-* [ ] Optimistic Lock
+* [ ] BEGIN
+* [ ] COMMIT
+* [ ] ROLLBACK
+* [ ] Material Lock
+* [ ] Mold Lock
+* [ ] Material 不足 Rollback
+* [ ] Mold In_Use Rollback
 
-## Security
+## Optimistic Lock
 
-* [ ] `.env`
-* [ ] `.env.example`
-* [ ] `.gitignore`
-* [ ] JWT Secret 使用環境變數
-* [ ] Database Password 使用環境變數
-* [ ] `.env` 沒有進 Git
+* [ ] version
+* [ ] Version Conflict
+* [ ] HTTP 409
+* [ ] Material
+* [ ] Product
+* [ ] BOM
+* [ ] Mold
 
 ## Docker
 
@@ -883,7 +793,7 @@ CLAUDE.md
 * [ ] Backend Container
 * [ ] PostgreSQL Container
 * [ ] Docker Network
-* [ ] PostgreSQL 沒有對外暴露 Port
+* [ ] PostgreSQL 不暴露 Host Port
 
 ## E2E
 
@@ -898,53 +808,54 @@ CLAUDE.md
 * [ ] HTML Snapshot
 * [ ] Console Log
 * [ ] API Log
-* [ ] Playwright Trace
+* [ ] Trace
 
 ## Concurrent
 
-* [ ] 3 Worker
-* [ ] 同時發送 Request
-* [ ] 1 Worker 成功
-* [ ] 2 Worker 拒絕
-* [ ] Material 不會變負數
-* [ ] Mold 不會被同時使用
+* [ ] Worker A
+* [ ] Worker B
+* [ ] Worker C
+* [ ] 真正並發 Request
+* [ ] 1 SUCCESS
+* [ ] 2 REJECT
+* [ ] 5 rounds
+* [ ] Material 不為負數
+* [ ] Mold 不重複使用
 * [ ] Product Stock 正確
 * [ ] Failed Transaction 完整 Rollback
-* [ ] 5 rounds 穩定通過
 
 ---
 
-# 26. 最終目標
+# 21. 最終目標
 
-完成後的系統：
+完成後：
 
 ```text
-                         ┌─────────────────┐
-                         │   Playwright    │
-                         │      E2E        │
-                         └────────┬────────┘
-                                  │
-                                  ▼
-┌────────────────┐       ┌─────────────────┐
-│    Frontend    │──────►│ Node.js/Express │
-└────────────────┘       └────────┬────────┘
-                                  │
-                                  ▼
-                         ┌─────────────────┐
-                         │   PostgreSQL    │
-                         │                 │
-                         │ Transaction     │
-                         │ Rollback        │
-                         │ Pessimistic Lock│
-                         │ Optimistic Lock │
-                         └────────┬────────┘
-                                  │
-                    ┌─────────────┼─────────────┐
-                    │             │             │
-                Worker A       Worker B      Worker C
+                         ┌────────────────────┐
+                         │   Playwright E2E   │
+                         └─────────┬──────────┘
+                                   │
+                                   ▼
+┌─────────────────┐       ┌────────────────────┐
+│    Frontend     │──────►│ Node.js / Express  │
+└─────────────────┘       └─────────┬──────────┘
+                                    │
+                                    ▼
+                         ┌────────────────────┐
+                         │    PostgreSQL      │
+                         │                    │
+                         │ Transaction        │
+                         │ Rollback           │
+                         │ Pessimistic Lock   │
+                         │ Optimistic Lock    │
+                         └─────────┬──────────┘
+                                   │
+                    ┌──────────────┼──────────────┐
+                    │              │              │
+                Worker A       Worker B       Worker C
 ```
 
-最終驗收必須證明：
+最終必須證明：
 
 ```text
 Material 不會變負數
@@ -955,7 +866,7 @@ Mold 不會被同時使用
 +
 Optimistic Lock 可以偵測版本衝突
 +
-多產線並發時資料保持一致
+3 Worker 並發時資料保持一致
 +
 PostgreSQL 不直接暴露給外部
 +
