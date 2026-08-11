@@ -1,5 +1,20 @@
 const { Pool } = require("pg");
 
+const requiredEnvVars = [
+  "DATABASE_HOST",
+  "DATABASE_PORT",
+  "DATABASE_NAME",
+  "DATABASE_USER",
+  "DATABASE_PASSWORD"
+];
+
+for (const envVar of requiredEnvVars) {
+  if (!process.env[envVar]) {
+    console.error(`Missing required environment variable: ${envVar}`);
+    process.exit(1);
+  }
+}
+
 const pool = new Pool({
   host: process.env.DATABASE_HOST,
   port: process.env.DATABASE_PORT ? Number(process.env.DATABASE_PORT) : 5432,
