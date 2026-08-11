@@ -123,6 +123,15 @@ function createMockPool(options = {}) {
         return { rows: data.workOrders.filter((row) => row.work_order_id === params[0]) };
       }
       if (sql.includes("FROM work_orders ORDER BY")) return { rows: data.workOrders };
+      if (sql.includes("UPDATE work_orders")) {
+        const id = params[7];
+        const wo = data.workOrders.find(w => w.work_order_id === id);
+        if (!wo) return { rows: [] };
+        return { rows: [{ ...wo, product_id: params[0], quantity: params[1], line: params[2], mold_id: params[3], status: params[4], creator_user_id: params[5], creator_name: params[6] }] };
+      }
+      if (sql.includes("DELETE FROM work_orders")) {
+        return { rows: params[0] === "WO-404" ? [] : [{ work_order_id: params[0] }] };
+      }
 
       if (sql.includes("FROM system_logs WHERE log_id = $1")) {
         return { rows: data.logs.filter((row) => String(row.log_id) === String(params[0])) };
@@ -531,4 +540,42 @@ test('optimistic lock returns 409 when version is incorrect', async () => {
   });
   assert.equal(res.statusCode, 409);
   assert.deepEqual(res.body, { error: 'Optimistic lock conflict or resource not found' });
+});
+
+test('Work Order PUT updates successfully', async () => {
+  const app = createApp({ pool: createMockPool() });
+  const res = await request(app, 'PUT', '/api/work-orders/WO-1', {
+    product_id: 'PROD-DESK',
+    quantity: 10,
+    line: 'Line B',
+    mold_id: 'MOLD-TEST',
+    status: 'In_Progress'
+  });
+  assert.equal(res.statusCode, 200);
+  assert.equal(res.body.status, 'In_Progress');
+  assert.equal(res.body.line, 'Line B');
+});
+
+test('Work Order PUT 404', async () => {
+  const app = createApp({ pool: createMockPool() });
+  const res = await request(app, 'PUT', '/api/work-orders/WO-UNKNOWN', {
+    product_id: 'PROD-DESK',
+    quantity: 10,
+    line: 'Line B',
+    mold_id: 'MOLD-TEST'
+  });
+  assert.equal(res.statusCode, 404);
+});
+
+test('Work Order DELETE success', async () => {
+  const app = createApp({ pool: createMockPool() });
+  const res = await request(app, 'DELETE', '/api/work-orders/WO-1');
+  assert.equal(res.statusCode, 200);
+  assert.equal(res.body.work_order_id, 'WO-1');
+});
+
+test('Work Order DELETE 404', async () => {
+  const app = createApp({ pool: createMockPool() });
+  const res = await request(app, 'DELETE', '/api/work-orders/WO-404');
+  assert.equal(res.statusCode, 404);
 });

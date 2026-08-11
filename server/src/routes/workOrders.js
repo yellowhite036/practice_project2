@@ -187,5 +187,32 @@ module.exports = function createWorkOrdersRouter(pool) {
     res.status(201).json(workOrder);
   }));
 
+  router.put("/:id", asyncRoute(async (req, res) => {
+    // For PUT, validateWorkOrder expects work_order_id, so we inject it into the body for validation
+    const bodyForValidation = { ...req.body, work_order_id: req.params.id };
+    const error = validateWorkOrder(bodyForValidation);
+    if (error) throw createHttpError(400, error);
+
+    const { product_id, quantity, line, mold_id, status = "Pending", creator_user_id = null, creator_name = null } = req.body;
+    const { rows } = await pool.query(
+      `UPDATE work_orders
+       SET product_id = $1, quantity = $2, line = $3, mold_id = $4, status = $5, creator_user_id = $6, creator_name = $7, updated_at = now()
+       WHERE work_order_id = $8
+       RETURNING ${WORK_ORDER_COLUMNS}`,
+      [product_id, quantity, line, mold_id, status, creator_user_id, creator_name, req.params.id]
+    );
+    if (rows.length === 0) throw createHttpError(404, "Work order not found");
+    res.json(rows[0]);
+  }));
+
+  router.delete("/:id", asyncRoute(async (req, res) => {
+    const { rows } = await pool.query(
+      `DELETE FROM work_orders WHERE work_order_id = $1 RETURNING ${WORK_ORDER_COLUMNS}`,
+      [req.params.id]
+    );
+    if (rows.length === 0) throw createHttpError(404, "Work order not found");
+    res.json(rows[0]);
+  }));
+
   return router;
 };
