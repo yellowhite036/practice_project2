@@ -1,0 +1,8 @@
+DROP TABLE IF EXISTS system_logs;
+DROP TABLE IF EXISTS inventory_transactions;
+DROP TABLE IF EXISTS work_orders;
+DROP TABLE IF EXISTS bom_table;
+DROP TABLE IF EXISTS products;
+DROP TABLE IF EXISTS molds;
+DROP TABLE IF EXISTS materials;
+DROP TABLE IF EXISTS users;
