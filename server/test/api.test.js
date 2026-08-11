@@ -80,18 +80,23 @@ function createMockPool(options = {}) {
         return { rows: [{ ...item, name: params[0], status: params[1], line: params[2], eta: params[3], product_id: params[4], version: version + 1 }] };
       }
       if (sql.includes("UPDATE molds SET status")) {
-        if (params.length === 0) {
-          // Literal SQL: UPDATE molds SET status = 'In_Use' WHERE mold_id = 'MOLD-TUBE'
-          const match = sql.match(/WHERE mold_id = '([^']+)'/);
-          const statusMatch = sql.match(/status = '([^']+)'/);
-          if (match && statusMatch) {
-            const mold = data.molds.find((m) => m.mold_id === match[1]);
-            if (mold) mold.status = statusMatch[1];
-          }
+        if (options.failUpdateMold) throw new Error("db error");
+        if (sql.includes("'Idle'")) {
+           const id = params[0] || (sql.match(/WHERE mold_id = '([^']+)'/) || [])[1];
+           const mold = data.molds.find((m) => m.mold_id === id);
+           if (mold) mold.status = 'Idle';
         } else {
-          // Parameterized from transaction: UPDATE molds SET status = 'In_Use', product_id = $1 WHERE mold_id = $2
-          const mold = data.molds.find((m) => m.mold_id === params[params.length - 1]);
-          if (mold) mold.status = "In_Use";
+           if (params.length === 0) {
+             const match = sql.match(/WHERE mold_id = '([^']+)'/);
+             const statusMatch = sql.match(/status = '([^']+)'/);
+             if (match && statusMatch) {
+               const mold = data.molds.find((m) => m.mold_id === match[1]);
+               if (mold) mold.status = statusMatch[1];
+             }
+           } else {
+             const mold = data.molds.find((m) => m.mold_id === params[params.length - 1]);
+             if (mold) mold.status = "In_Use";
+           }
         }
         return { rows: [] };
       }
@@ -123,6 +128,16 @@ function createMockPool(options = {}) {
         return { rows: data.workOrders.filter((row) => row.work_order_id === params[0]) };
       }
       if (sql.includes("FROM work_orders ORDER BY")) return { rows: data.workOrders };
+      if (sql.includes("UPDATE work_orders SET status = ")) {
+        const id = params.length ? params[0] : (sql.match(/WHERE work_order_id = '([^']+)'/) || [])[1];
+        const wo = data.workOrders.find(w => w.work_order_id === id);
+        if (wo) {
+          if (sql.includes("'In_Progress'")) wo.status = 'In_Progress';
+          if (sql.includes("'Completed'")) wo.status = 'Completed';
+          if (sql.includes("'Rejected'")) wo.status = 'Rejected';
+        }
+        return { rows: [wo] };
+      }
       if (sql.includes("UPDATE work_orders")) {
         const id = params[7];
         const wo = data.workOrders.find(w => w.work_order_id === id);
@@ -199,6 +214,68 @@ function createMockPool(options = {}) {
         if (sql.includes("INSERT INTO system_logs")) {
           if (options.failSystemLog) throw new Error("failSystemLog");
           return { rows: [{}] };
+        }
+
+        // --- State transition handlers ---
+
+        // SELECT work_order FOR UPDATE (used by start/complete/reject)
+        if (sql.includes("FROM work_orders WHERE work_order_id = $1 FOR UPDATE")) {
+          const wo = data.workOrders.find(w => w.work_order_id === params[0]);
+          return { rows: wo ? [wo] : [] };
+        }
+
+        // SELECT mold FOR UPDATE with mold_id column (used by complete/reject)
+        if (sql.includes("SELECT mold_id, status FROM molds WHERE mold_id = $1 FOR UPDATE")) {
+          return { rows: data.molds.filter(m => m.mold_id === params[0]) };
+        }
+
+        // SELECT product FOR UPDATE (used by reject)
+        if (sql.includes("SELECT product_id, stock FROM products WHERE product_id = $1 FOR UPDATE")) {
+          return { rows: data.products.filter(p => p.product_id === params[0]) };
+        }
+
+        // UPDATE work_orders SET status = 'In_Progress' (start)
+        if (sql.includes("UPDATE work_orders SET status = 'In_Progress'")) {
+          const wo = data.workOrders.find(w => w.work_order_id === params[0]);
+          if (wo) wo.status = "In_Progress";
+          return { rows: wo ? [wo] : [] };
+        }
+
+        // UPDATE work_orders SET status = 'Completed' (complete)
+        if (sql.includes("UPDATE work_orders SET status = 'Completed'")) {
+          const wo = data.workOrders.find(w => w.work_order_id === params[0]);
+          if (wo) wo.status = "Completed";
+          return { rows: wo ? [wo] : [] };
+        }
+
+        // UPDATE work_orders SET status = 'Rejected' (reject)
+        if (sql.includes("UPDATE work_orders SET status = 'Rejected'")) {
+          const wo = data.workOrders.find(w => w.work_order_id === params[0]);
+          if (wo) wo.status = "Rejected";
+          return { rows: wo ? [wo] : [] };
+        }
+
+        // UPDATE materials SET stock = stock + $1 (refund material stock)
+        if (sql.includes("UPDATE materials SET stock = stock + $1, updated_at = now() WHERE material_id = $2")) {
+          const m = data.materials.find(x => x.material_id === params[1]);
+          if (m) m.stock = Number(m.stock) + params[0];
+          return { rows: m ? [m] : [] };
+        }
+
+        // UPDATE products SET stock = stock - $1 (deduct product stock on reject)
+        if (sql.includes("UPDATE products SET stock = stock - $1, updated_at = now() WHERE product_id = $2")) {
+          if (options.failUpdateProduct) throw new Error("failUpdateProduct");
+          const p = data.products.find(x => x.product_id === params[1]);
+          if (p) p.stock = Number(p.stock) - params[0];
+          return { rows: p ? [p] : [] };
+        }
+
+        // UPDATE molds SET status = 'Idle' (release mold on complete/reject)
+        if (sql.includes("UPDATE molds SET status = 'Idle'")) {
+          if (options.failUpdateMold) throw new Error("db error");
+          const m = data.molds.find(x => x.mold_id === params[0]);
+          if (m) { m.status = "Idle"; m.product_id = null; }
+          return { rows: m ? [m] : [] };
         }
 
         return pool.query(sql, params);
@@ -578,4 +655,104 @@ test('Work Order DELETE 404', async () => {
   const app = createApp({ pool: createMockPool() });
   const res = await request(app, 'DELETE', '/api/work-orders/WO-404');
   assert.equal(res.statusCode, 404);
+});
+
+
+test('Work Order START success (Pending -> In_Progress)', async () => {
+  const pool = createMockPool();
+  const app = createApp({ pool });
+  // Default mock is Pending
+  const res = await request(app, 'POST', '/api/work-orders/WO-1/start');
+  assert.equal(res.statusCode, 200);
+  assert.equal(res.body.status, 'In_Progress');
+});
+
+test('Work Order COMPLETE success (In_Progress -> Completed)', async () => {
+  const pool = createMockPool();
+  const app = createApp({ pool });
+  await pool.query("UPDATE work_orders SET status = 'In_Progress' WHERE work_order_id = 'WO-1'");
+
+  const res = await request(app, 'POST', '/api/work-orders/WO-1/complete');
+  assert.equal(res.statusCode, 200);
+  assert.equal(res.body.status, 'Completed');
+});
+
+test('Work Order COMPLETE success (Pending -> Completed)', async () => {
+  const pool = createMockPool();
+  const app = createApp({ pool });
+
+  const res = await request(app, 'POST', '/api/work-orders/WO-1/complete');
+  assert.equal(res.statusCode, 200);
+  assert.equal(res.body.status, 'Completed');
+});
+
+test('Work Order REJECT success (Pending -> Rejected) with inventory rollback', async () => {
+  const pool = createMockPool();
+  const app = createApp({ pool });
+
+  const res = await request(app, 'POST', '/api/work-orders/WO-1/reject');
+  assert.equal(res.statusCode, 200);
+  assert.equal(res.body.status, 'Rejected');
+});
+
+test('Work Order illegal transitions return 409', async () => {
+  const pool = createMockPool();
+  const app = createApp({ pool });
+
+  // Set to Completed
+  await pool.query("UPDATE work_orders SET status = 'Completed' WHERE work_order_id = 'WO-1'");
+
+  let res = await request(app, 'POST', '/api/work-orders/WO-1/start');
+  assert.equal(res.statusCode, 409);
+
+  res = await request(app, 'POST', '/api/work-orders/WO-1/reject');
+  assert.equal(res.statusCode, 409);
+
+  // Set to Rejected
+  await pool.query("UPDATE work_orders SET status = 'Rejected' WHERE work_order_id = 'WO-1'");
+
+  res = await request(app, 'POST', '/api/work-orders/WO-1/start');
+  assert.equal(res.statusCode, 409);
+
+  res = await request(app, 'POST', '/api/work-orders/WO-1/complete');
+  assert.equal(res.statusCode, 409);
+});
+
+test('Work Order state transitions 404', async () => {
+  const pool = createMockPool();
+  const app = createApp({ pool });
+  const res = await request(app, 'POST', '/api/work-orders/WO-404/start');
+  assert.equal(res.statusCode, 404);
+});
+
+
+test('Work Order START rollback on error', async () => {
+  let rollbackCount = 0;
+  const pool = createMockPool({ onRollback: () => rollbackCount++, failSystemLog: true });
+  const app = createApp({ pool });
+
+  const res = await request(app, 'POST', '/api/work-orders/WO-1/start');
+  assert.equal(res.statusCode, 500);
+  assert.equal(rollbackCount, 1);
+});
+
+test('Work Order COMPLETE rollback on error', async () => {
+  let rollbackCount = 0;
+  const pool = createMockPool({ onRollback: () => rollbackCount++, failUpdateMold: true });
+  const app = createApp({ pool });
+
+  await pool.query("UPDATE work_orders SET status = 'In_Progress' WHERE work_order_id = 'WO-1'");
+  const res = await request(app, 'POST', '/api/work-orders/WO-1/complete');
+  assert.equal(res.statusCode, 500);
+  assert.equal(rollbackCount, 1);
+});
+
+test('Work Order REJECT rollback on error', async () => {
+  let rollbackCount = 0;
+  const pool = createMockPool({ onRollback: () => rollbackCount++, failUpdateProduct: true });
+  const app = createApp({ pool });
+
+  const res = await request(app, 'POST', '/api/work-orders/WO-1/reject');
+  assert.equal(res.statusCode, 500);
+  assert.equal(rollbackCount, 1);
 });

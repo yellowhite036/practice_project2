@@ -214,5 +214,222 @@ module.exports = function createWorkOrdersRouter(pool) {
     res.json(rows[0]);
   }));
 
+  /**
+   * POST /api/work-orders/:id/start
+   * Transition: Pending -> In_Progress
+   * No stock/mold changes.
+   */
+  router.post("/:id/start", asyncRoute(async (req, res) => {
+    const workOrderId = req.params.id;
+
+    const txFn = pool.withTransaction
+      ? (cb) => pool.withTransaction(cb)
+      : (cb) => withTransaction(pool, cb);
+
+    const workOrder = await txFn(async (client) => {
+      // 1. Lock Work Order row
+      const woResult = await client.query(
+        `SELECT work_order_id, status, mold_id, product_id, quantity, line, creator_user_id, creator_name, created_at, updated_at
+         FROM work_orders WHERE work_order_id = $1 FOR UPDATE`,
+        [workOrderId]
+      );
+      if (woResult.rows.length === 0) throw createHttpError(404, "Work order not found");
+
+      const wo = woResult.rows[0];
+
+      // 2. Validate state transition
+      if (wo.status !== "Pending") {
+        throw createHttpError(409, `Cannot start work order: current status is '${wo.status}', expected 'Pending'`);
+      }
+
+      // 3. Update status
+      const updateResult = await client.query(
+        `UPDATE work_orders SET status = 'In_Progress', updated_at = now()
+         WHERE work_order_id = $1
+         RETURNING ${WORK_ORDER_COLUMNS}`,
+        [workOrderId]
+      );
+
+      // 4. Insert System Log
+      await client.query(
+        `INSERT INTO system_logs (level, message, work_order_id, created_by_user_id)
+         VALUES ($1, $2, $3, $4)`,
+        ["INFO", `Work order ${workOrderId} started (Pending -> In_Progress)`, workOrderId, wo.creator_user_id]
+      );
+
+      return updateResult.rows[0];
+    });
+
+    res.json(workOrder);
+  }));
+
+  /**
+   * POST /api/work-orders/:id/complete
+   * Transition: Pending or In_Progress -> Completed
+   * Releases Mold (status -> Idle). No stock changes.
+   */
+  router.post("/:id/complete", asyncRoute(async (req, res) => {
+    const workOrderId = req.params.id;
+
+    const txFn = pool.withTransaction
+      ? (cb) => pool.withTransaction(cb)
+      : (cb) => withTransaction(pool, cb);
+
+    const workOrder = await txFn(async (client) => {
+      // 1. Lock Work Order row
+      const woResult = await client.query(
+        `SELECT work_order_id, status, mold_id, product_id, quantity, line, creator_user_id, creator_name, created_at, updated_at
+         FROM work_orders WHERE work_order_id = $1 FOR UPDATE`,
+        [workOrderId]
+      );
+      if (woResult.rows.length === 0) throw createHttpError(404, "Work order not found");
+
+      const wo = woResult.rows[0];
+
+      // 2. Validate state transition
+      if (wo.status !== "Pending" && wo.status !== "In_Progress") {
+        throw createHttpError(409, `Cannot complete work order: current status is '${wo.status}', expected 'Pending' or 'In_Progress'`);
+      }
+
+      // 3. Lock Mold FOR UPDATE
+      await client.query(
+        "SELECT mold_id, status FROM molds WHERE mold_id = $1 FOR UPDATE",
+        [wo.mold_id]
+      );
+
+      // 4. Release Mold (Idle)
+      await client.query(
+        "UPDATE molds SET status = 'Idle', product_id = NULL, updated_at = now() WHERE mold_id = $1",
+        [wo.mold_id]
+      );
+
+      // 5. Update Work Order status
+      const updateResult = await client.query(
+        `UPDATE work_orders SET status = 'Completed', updated_at = now()
+         WHERE work_order_id = $1
+         RETURNING ${WORK_ORDER_COLUMNS}`,
+        [workOrderId]
+      );
+
+      // 6. Insert System Log
+      await client.query(
+        `INSERT INTO system_logs (level, message, work_order_id, created_by_user_id)
+         VALUES ($1, $2, $3, $4)`,
+        ["INFO", `Work order ${workOrderId} completed (${wo.status} -> Completed)`, workOrderId, wo.creator_user_id]
+      );
+
+      return updateResult.rows[0];
+    });
+
+    res.json(workOrder);
+  }));
+
+  /**
+   * POST /api/work-orders/:id/reject
+   * Transition: Pending or In_Progress -> Rejected
+   * Reverses inventory: refund materials (restock), deduct product stock,
+   * inserts inventory_transactions refund records, releases Mold (Idle).
+   */
+  router.post("/:id/reject", asyncRoute(async (req, res) => {
+    const workOrderId = req.params.id;
+
+    const txFn = pool.withTransaction
+      ? (cb) => pool.withTransaction(cb)
+      : (cb) => withTransaction(pool, cb);
+
+    const workOrder = await txFn(async (client) => {
+      // 1. Lock Work Order row
+      const woResult = await client.query(
+        `SELECT work_order_id, status, mold_id, product_id, quantity, line, creator_user_id, creator_name, created_at, updated_at
+         FROM work_orders WHERE work_order_id = $1 FOR UPDATE`,
+        [workOrderId]
+      );
+      if (woResult.rows.length === 0) throw createHttpError(404, "Work order not found");
+
+      const wo = woResult.rows[0];
+
+      // 2. Validate state transition
+      if (wo.status !== "Pending" && wo.status !== "In_Progress") {
+        throw createHttpError(409, `Cannot reject work order: current status is '${wo.status}', expected 'Pending' or 'In_Progress'`);
+      }
+
+      // 3. Get BOM items for this product
+      const bomResult = await client.query(
+        "SELECT material_id, amount_per_unit FROM bom_table WHERE product_id = $1 ORDER BY material_id",
+        [wo.product_id]
+      );
+      const bomItems = bomResult.rows;
+
+      // 4. Lock Materials FOR UPDATE (ordered by material_id to avoid deadlocks)
+      const materialIds = bomItems.map((b) => b.material_id);
+      if (materialIds.length > 0) {
+        await client.query(
+          "SELECT material_id, stock FROM materials WHERE material_id = ANY($1) ORDER BY material_id FOR UPDATE",
+          [materialIds]
+        );
+      }
+
+      // 5. Lock Product FOR UPDATE
+      await client.query(
+        "SELECT product_id, stock FROM products WHERE product_id = $1 FOR UPDATE",
+        [wo.product_id]
+      );
+
+      // 6. Lock Mold FOR UPDATE
+      await client.query(
+        "SELECT mold_id, status FROM molds WHERE mold_id = $1 FOR UPDATE",
+        [wo.mold_id]
+      );
+
+      // 7. Refund Material stock & insert inventory_transactions (restock)
+      for (const bomItem of bomItems) {
+        const refundQty = Number(bomItem.amount_per_unit) * Number(wo.quantity);
+
+        await client.query(
+          "UPDATE materials SET stock = stock + $1, updated_at = now() WHERE material_id = $2",
+          [refundQty, bomItem.material_id]
+        );
+
+        // transaction_type 'restock' is allowed per schema CHECK constraint
+        await client.query(
+          `INSERT INTO inventory_transactions (work_order_id, material_id, product_id, transaction_type, quantity, created_by_user_id)
+           VALUES ($1, $2, $3, $4, $5, $6)`,
+          [workOrderId, bomItem.material_id, wo.product_id, "restock", refundQty, wo.creator_user_id]
+        );
+      }
+
+      // 8. Deduct Product stock
+      await client.query(
+        "UPDATE products SET stock = stock - $1, updated_at = now() WHERE product_id = $2",
+        [wo.quantity, wo.product_id]
+      );
+
+      // 9. Release Mold (Idle)
+      await client.query(
+        "UPDATE molds SET status = 'Idle', product_id = NULL, updated_at = now() WHERE mold_id = $1",
+        [wo.mold_id]
+      );
+
+      // 10. Update Work Order status
+      const updateResult = await client.query(
+        `UPDATE work_orders SET status = 'Rejected', updated_at = now()
+         WHERE work_order_id = $1
+         RETURNING ${WORK_ORDER_COLUMNS}`,
+        [workOrderId]
+      );
+
+      // 11. Insert System Log
+      await client.query(
+        `INSERT INTO system_logs (level, message, work_order_id, created_by_user_id)
+         VALUES ($1, $2, $3, $4)`,
+        ["INFO", `Work order ${workOrderId} rejected (${wo.status} -> Rejected); materials restocked`, workOrderId, wo.creator_user_id]
+      );
+
+      return updateResult.rows[0];
+    });
+
+    res.json(workOrder);
+  }));
+
   return router;
 };
