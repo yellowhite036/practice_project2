@@ -59,16 +59,17 @@ module.exports = function createProductsRouter(pool) {
   router.put("/:id", asyncRoute(async (req, res) => {
     const error = validateProduct(req.body);
     if (error) throw createHttpError(400, error);
+    if (req.body.version === undefined) throw createHttpError(400, "version is required");
 
-    const { name, cycle_minutes, mold_id = null, stock = 0 } = req.body;
+    const { name, cycle_minutes, mold_id = null, stock = 0, version } = req.body;
     const { rows } = await pool.query(
       `UPDATE products
-       SET name = $1, cycle_minutes = $2, mold_id = $3, stock = $4, updated_at = now()
-       WHERE product_id = $5
+       SET name = $1, cycle_minutes = $2, mold_id = $3, stock = $4, version = version + 1, updated_at = now()
+       WHERE product_id = $5 AND version = $6
        RETURNING ${PRODUCT_COLUMNS}`,
-      [name, cycle_minutes, mold_id, stock, req.params.id]
+      [name, cycle_minutes, mold_id, stock, req.params.id, version]
     );
-    if (rows.length === 0) throw createHttpError(404, "Product not found");
+    if (rows.length === 0) throw createHttpError(409, "Optimistic lock conflict or resource not found");
     res.json(rows[0]);
   }));
 

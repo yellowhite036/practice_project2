@@ -43,7 +43,13 @@ function createMockPool(options = {}) {
       }
       if (sql.includes("FROM materials ORDER BY")) return { rows: data.materials };
       if (sql.includes("INSERT INTO materials")) return { rows: [{ ...data.materials[0], material_id: params[0], name: params[1], unit: params[2] }] };
-      if (sql.includes("UPDATE materials")) return { rows: params[6] === "UNKNOWN" ? [] : [{ ...data.materials[0], name: params[0], unit: params[1], stock: params[2] }] };
+      if (sql.includes("UPDATE materials")) {
+        const id = params[6];
+        const version = params[7];
+        const item = data.materials.find((m) => m.material_id === id);
+        if (!item || item.version !== version) return { rows: [] };
+        return { rows: [{ ...item, name: params[0], unit: params[1], stock: params[2], version: version + 1 }] };
+      }
       if (sql.includes("DELETE FROM materials")) return { rows: params[0] === "UNKNOWN" ? [] : [{ material_id: params[0] }] };
 
       if (sql.includes("FROM products WHERE product_id = $1")) {
@@ -53,12 +59,26 @@ function createMockPool(options = {}) {
       if (sql.includes("SELECT product_id FROM products")) {
         return { rows: data.products.filter((row) => row.product_id === params[0]).map((row) => ({ product_id: row.product_id })) };
       }
+      if (sql.includes("UPDATE products")) {
+        const id = params[4];
+        const version = params[5];
+        const item = data.products.find((p) => p.product_id === id);
+        if (!item || item.version !== version) return { rows: [] };
+        return { rows: [{ ...item, name: params[0], cycle_minutes: params[1], mold_id: params[2], stock: params[3], version: version + 1 }] };
+      }
 
       if (sql.includes("FROM molds WHERE mold_id = $1")) {
         return { rows: data.molds.filter((row) => row.mold_id === params[0]) };
       }
       if (sql.includes("FROM molds ORDER BY")) return { rows: data.molds };
       if (sql.includes("DELETE FROM molds")) return { rows: params[0] === "UNKNOWN" ? [] : [{ mold_id: params[0] }] };
+      if (sql.includes("UPDATE molds\n       SET name")) {
+        const id = params[5];
+        const version = params[6];
+        const item = data.molds.find((m) => m.mold_id === id);
+        if (!item || item.version !== version) return { rows: [] };
+        return { rows: [{ ...item, name: params[0], status: params[1], line: params[2], eta: params[3], product_id: params[4], version: version + 1 }] };
+      }
       if (sql.includes("UPDATE molds SET status")) {
         if (params.length === 0) {
           // Literal SQL: UPDATE molds SET status = 'In_Use' WHERE mold_id = 'MOLD-TUBE'
@@ -90,6 +110,13 @@ function createMockPool(options = {}) {
         return { rows: data.bom.filter((row) => row.bom_id === params[0]) };
       }
       if (sql.includes("FROM bom_table ORDER BY")) return { rows: data.bom };
+      if (sql.includes("UPDATE bom_table")) {
+        const id = params[3];
+        const version = params[4];
+        const item = data.bom.find((b) => b.bom_id === id);
+        if (!item || item.version !== version) return { rows: [] };
+        return { rows: [{ ...item, product_id: params[0], material_id: params[1], amount_per_unit: params[2], version: version + 1 }] };
+      }
       if (sql.includes("DELETE FROM bom_table")) return { rows: params[0] === "BOM-404" ? [] : [{ bom_id: params[0] }] };
 
       if (sql.includes("FROM work_orders WHERE work_order_id = $1")) {
@@ -282,10 +309,12 @@ test("materials CRUD endpoints return expected status codes", async () => {
     stock: 11,
     capacity: 100,
     safety_stock: 5,
-    location: "A-02-02"
+    location: "A-02-02",
+    version: 1
   });
   assert.equal(updated.statusCode, 200);
   assert.equal(updated.body.name, "Steel Updated");
+  assert.equal(updated.body.version, 2);
 
   const deleted = await request(app, "DELETE", "/api/materials/MAT-STEEL");
   assert.equal(deleted.statusCode, 200);
@@ -479,4 +508,27 @@ test("Work Order creation rolls back if system log fails", async () => {
 
   assert.equal(res.statusCode, 500);
   assert.equal(rollbackCount, 1);
+});
+
+test('optimistic lock returns 400 when version is missing', async () => {
+  const app = createApp({ pool: createMockPool() });
+  const res = await request(app, 'PUT', '/api/materials/MAT-STEEL', {
+    name: 'Steel Updated',
+    unit: 'kg',
+    stock: 11
+  });
+  assert.equal(res.statusCode, 400);
+  assert.deepEqual(res.body, { error: 'version is required' });
+});
+
+test('optimistic lock returns 409 when version is incorrect', async () => {
+  const app = createApp({ pool: createMockPool() });
+  const res = await request(app, 'PUT', '/api/materials/MAT-STEEL', {
+    name: 'Steel Updated',
+    unit: 'kg',
+    stock: 11,
+    version: 999
+  });
+  assert.equal(res.statusCode, 409);
+  assert.deepEqual(res.body, { error: 'Optimistic lock conflict or resource not found' });
 });

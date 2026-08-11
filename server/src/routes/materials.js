@@ -63,16 +63,17 @@ module.exports = function createMaterialsRouter(pool) {
   router.put("/:id", asyncRoute(async (req, res) => {
     const error = validateMaterial(req.body);
     if (error) throw createHttpError(400, error);
+    if (req.body.version === undefined) throw createHttpError(400, "version is required");
 
-    const { name, unit, stock = 0, capacity = null, safety_stock = 0, location = null } = req.body;
+    const { name, unit, stock = 0, capacity = null, safety_stock = 0, location = null, version } = req.body;
     const { rows } = await pool.query(
       `UPDATE materials
-       SET name = $1, unit = $2, stock = $3, capacity = $4, safety_stock = $5, location = $6, updated_at = now()
-       WHERE material_id = $7
+       SET name = $1, unit = $2, stock = $3, capacity = $4, safety_stock = $5, location = $6, version = version + 1, updated_at = now()
+       WHERE material_id = $7 AND version = $8
        RETURNING ${MATERIAL_COLUMNS}`,
-      [name, unit, stock, capacity, safety_stock, location, req.params.id]
+      [name, unit, stock, capacity, safety_stock, location, req.params.id, version]
     );
-    if (rows.length === 0) throw createHttpError(404, "Material not found");
+    if (rows.length === 0) throw createHttpError(409, "Optimistic lock conflict or resource not found");
     res.json(rows[0]);
   }));
 

@@ -59,16 +59,17 @@ module.exports = function createMoldsRouter(pool) {
   router.put("/:id", asyncRoute(async (req, res) => {
     const error = validateMold(req.body);
     if (error) throw createHttpError(400, error);
+    if (req.body.version === undefined) throw createHttpError(400, "version is required");
 
-    const { name, status = "Idle", line = null, eta = null, product_id = null } = req.body;
+    const { name, status = "Idle", line = null, eta = null, product_id = null, version } = req.body;
     const { rows } = await pool.query(
       `UPDATE molds
-       SET name = $1, status = $2, line = $3, eta = $4, product_id = $5, updated_at = now()
-       WHERE mold_id = $6
+       SET name = $1, status = $2, line = $3, eta = $4, product_id = $5, version = version + 1, updated_at = now()
+       WHERE mold_id = $6 AND version = $7
        RETURNING ${MOLD_COLUMNS}`,
-      [name, status, line, eta, product_id, req.params.id]
+      [name, status, line, eta, product_id, req.params.id, version]
     );
-    if (rows.length === 0) throw createHttpError(404, "Mold not found");
+    if (rows.length === 0) throw createHttpError(409, "Optimistic lock conflict or resource not found");
     res.json(rows[0]);
   }));
 

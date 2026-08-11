@@ -81,8 +81,9 @@ module.exports = function createBomRouter(pool) {
   router.put("/:id", asyncRoute(async (req, res) => {
     const error = validateBom(req.body);
     if (error) throw createHttpError(400, error);
+    if (req.body.version === undefined) throw createHttpError(400, "version is required");
 
-    const { product_id, material_id, amount_per_unit } = req.body;
+    const { product_id, material_id, amount_per_unit, version } = req.body;
     await ensureProductAndMaterialExist(pool, product_id, material_id);
 
     const duplicate = await pool.query(
@@ -93,12 +94,12 @@ module.exports = function createBomRouter(pool) {
 
     const { rows } = await pool.query(
       `UPDATE bom_table
-       SET product_id = $1, material_id = $2, amount_per_unit = $3, updated_at = now()
-       WHERE bom_id = $4
+       SET product_id = $1, material_id = $2, amount_per_unit = $3, version = version + 1, updated_at = now()
+       WHERE bom_id = $4 AND version = $5
        RETURNING ${BOM_COLUMNS}`,
-      [product_id, material_id, amount_per_unit, req.params.id]
+      [product_id, material_id, amount_per_unit, req.params.id, version]
     );
-    if (rows.length === 0) throw createHttpError(404, "BOM not found");
+    if (rows.length === 0) throw createHttpError(409, "Optimistic lock conflict or resource not found");
     res.json(rows[0]);
   }));
 
