@@ -1,4 +1,4 @@
-const STORAGE_KEY = "wms-mes-demo-state-v23";
+const API_BASE_URL = "/api";
 
 const initialMaterials = [
   { id: "MAT-STEEL", name: "鋼鐵", unit: "kg", stock: 1500, capacity: 2000, safety: 300, location: "A-01-01" },
@@ -132,7 +132,7 @@ function setMoldStatus(mold, newStatus) {
   }
 }
 
-let state = loadState();
+let state = createEmptyState();
 
 const viewTitles = {
   workorders: "工單派發",
@@ -158,25 +158,173 @@ const automationTemplate = [
 const $ = (selector) => document.querySelector(selector);
 const $$ = (selector) => [...document.querySelectorAll(selector)];
 
-function loadState() {
-  const saved = localStorage.getItem(STORAGE_KEY);
-  if (saved) {
-    try {
-      const parsed = JSON.parse(saved);
-      // 自動修正舊版沒有 bomTable 的問題，或合併資料
-      if (!parsed.bomTable) {
-        parsed.bomTable = initialBomTable;
-      }
-      return { ...structuredClone(seedState), ...parsed };
-    } catch {
-      localStorage.removeItem(STORAGE_KEY);
-    }
-  }
-  return structuredClone(seedState);
+function createEmptyState() {
+  return {
+    role: "operator",
+    activeView: "workorders",
+    materials: [],
+    molds: [],
+    products: [],
+    bomTable: [],
+    workOrders: [],
+    lastAutomation: null,
+    logs: []
+  };
 }
 
-function saveState() {
-  localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+async function apiRequest(method, path, body = null) {
+  const options = {
+    method,
+    headers: { Accept: "application/json" }
+  };
+
+  if (body !== null) {
+    options.headers["Content-Type"] = "application/json";
+    options.body = JSON.stringify(body);
+  }
+
+  let response;
+  try {
+    response = await fetch(`${API_BASE_URL}${path}`, options);
+  } catch {
+    throw new Error("無法連線至後端服務，請確認 Express API 是否已啟動。");
+  }
+
+  const contentType = response.headers.get("content-type") || "";
+  const data = contentType.includes("application/json") ? await response.json() : null;
+
+  if (!response.ok) {
+    const fallback = {
+      400: "資料格式不正確，請檢查輸入內容。",
+      404: "找不到指定資料。",
+      500: "後端服務發生錯誤，請稍後再試。",
+      503: "後端或資料庫目前無法連線。"
+    }[response.status] || "API 請求失敗。";
+    throw new Error(data && data.error ? data.error : fallback);
+  }
+
+  return data;
+}
+
+function mapMaterial(row) {
+  return {
+    id: row.material_id,
+    name: row.name,
+    unit: row.unit,
+    stock: Number(row.stock ?? 0),
+    capacity: row.capacity === null || row.capacity === undefined ? 0 : Number(row.capacity),
+    safety: Number(row.safety_stock ?? 0),
+    location: row.location || ""
+  };
+}
+
+function toApiMaterial(material) {
+  return {
+    material_id: material.id,
+    name: material.name,
+    unit: material.unit,
+    stock: material.stock,
+    capacity: material.capacity,
+    safety_stock: material.safety,
+    location: material.location
+  };
+}
+
+function mapProduct(row) {
+  return {
+    id: row.product_id,
+    name: row.name,
+    cycleMinutes: Number(row.cycle_minutes),
+    moldId: row.mold_id,
+    stock: Number(row.stock ?? 0)
+  };
+}
+
+function mapMold(row) {
+  return {
+    id: row.mold_id,
+    name: row.name,
+    status: row.status,
+    line: row.line || "-",
+    eta: row.eta || "-",
+    productId: row.product_id || ""
+  };
+}
+
+function mapBom(row) {
+  return {
+    bomId: row.bom_id,
+    productId: row.product_id,
+    materialId: row.material_id,
+    amountPerUnit: Number(row.amount_per_unit)
+  };
+}
+
+function mapWorkOrder(row) {
+  return {
+    id: row.work_order_id,
+    productId: row.product_id,
+    quantity: Number(row.quantity),
+    line: row.line,
+    moldId: row.mold_id,
+    status: row.status,
+    creator: row.creator_name || row.creator_user_id || "-"
+  };
+}
+
+function mapLog(row) {
+  return {
+    type: row.level,
+    message: row.message,
+    time: row.created_at ? new Date(row.created_at).toLocaleTimeString("zh-TW", { hour12: false }) : nowTime()
+  };
+}
+
+async function fetchBackendState() {
+  const [materials, products, molds, bomTable, workOrders, logs] = await Promise.all([
+    apiRequest("GET", "/materials"),
+    apiRequest("GET", "/products"),
+    apiRequest("GET", "/molds"),
+    apiRequest("GET", "/bom"),
+    apiRequest("GET", "/work-orders"),
+    apiRequest("GET", "/logs")
+  ]);
+
+  return {
+    materials: materials.map(mapMaterial),
+    products: products.map(mapProduct),
+    molds: molds.map(mapMold),
+    bomTable: bomTable.map(mapBom),
+    workOrders: workOrders.map(mapWorkOrder),
+    logs: logs.map(mapLog)
+  };
+}
+
+async function refreshStateFromApi() {
+  const currentRole = state.role;
+  const currentView = state.activeView;
+  const data = await fetchBackendState();
+  state = {
+    ...createEmptyState(),
+    ...data,
+    role: currentRole,
+    activeView: currentView
+  };
+}
+
+async function initializeApp() {
+  addLog("INFO", "正在連線至後端服務...");
+  render();
+
+  try {
+    await apiRequest("GET", "/health");
+    await refreshStateFromApi();
+    render();
+  } catch (error) {
+    state = createEmptyState();
+    addLog("ERR", error.message);
+    render();
+  }
 }
 
 function formatAmount(value) {
@@ -217,6 +365,7 @@ function calculateRequirements(productId, quantity) {
   const bomRows = getBomForProduct(productId);
   return bomRows.map((row) => {
     const material = getMaterial(row.materialId);
+    if (!material) return null;
     return {
       ...row,
       name: material.name,
@@ -225,7 +374,7 @@ function calculateRequirements(productId, quantity) {
       required: row.amountPerUnit * quantity,
       afterStock: material.stock - row.amountPerUnit * quantity
     };
-  });
+  }).filter(Boolean);
 }
 
 function render() {
@@ -242,7 +391,6 @@ function render() {
   renderMolds();
   renderProducts();
   renderLogs();
-  saveState();
 }
 
 function renderRole() {
@@ -293,6 +441,10 @@ function renderMetrics() {
 function renderMaterialOptions() {
   const select = $("#materialSelect");
   if (!select) return;
+  if (state.materials.length === 0) {
+    select.innerHTML = `<option value="">無材料資料</option>`;
+    return;
+  }
   const currentValue = select.value || state.materials[0].id;
   select.innerHTML = state.materials
     .map((m) => `<option value="${m.id}">${m.name} (${formatAmount(m.stock)}${m.unit})</option>`)
@@ -303,6 +455,10 @@ function renderMaterialOptions() {
 function renderMoldOptions() {
   const select = $("#moldSelect");
   if (!select) return;
+  if (state.molds.length === 0) {
+    select.innerHTML = `<option value="">無模具資料</option>`;
+    return;
+  }
   const currentValue = select.value || state.molds[0].id;
   select.innerHTML = state.molds
     .map((mold) => `<option value="${mold.id}">${mold.name} (${translateMoldStatus(mold.status)})</option>`)
@@ -313,11 +469,11 @@ function renderMoldOptions() {
 function getDerivedProduct() {
   const matId = $("#materialSelect") ? $("#materialSelect").value : null;
   const moldId = $("#moldSelect") ? $("#moldSelect").value : null;
-  if (!matId || !moldId) return state.products[0];
+  if (!matId || !moldId) return state.products[0] || null;
   return state.products.find((p) =>
     p.moldId === moldId &&
     (state.bomTable || []).some((b) => b.productId === p.id && b.materialId === matId)
-  ) || state.products[0];
+  ) || state.products[0] || null;
 }
 
 function renderCombinedProduct() {
@@ -400,10 +556,10 @@ function renderWorkOrders() {
       return `
         <tr>
           <td><strong>${order.id}</strong></td>
-          <td>${product.name}</td>
+          <td>${product ? product.name : order.productId}</td>
           <td>${order.quantity}</td>
           <td>${order.line}</td>
-          <td>${mold.name}</td>
+          <td>${mold ? mold.name : order.moldId}</td>
           <td><span class="status-pill ok">${order.status}</span></td>
           <td>${order.creator}</td>
         </tr>
@@ -450,7 +606,7 @@ function renderMolds() {
           <div class="card-top">
             <div>
               <h4>${mold.name}</h4>
-              <p>${mold.id} · 綁定 ${product.name}</p>
+              <p>${mold.id} · 綁定 ${product ? product.name : "-"}</p>
             </div>
             <span class="status-pill ${mold.status === "Idle" ? "ok" : "warn"}">${translateMoldStatus(mold.status)}</span>
           </div>
@@ -515,69 +671,8 @@ function translateMoldStatus(status) {
 function submitWorkOrder(event) {
   event.preventDefault();
 
-  const product = getDerivedProduct();
-  if (!product) {
-    addLog("ERR", "工單建立失敗：選取的材料與模具組合無對應產品。");
-    state.lastAutomation = { failedAt: 0, success: false };
-    render();
-    return;
-  }
-
-  const productId = product.id;
-  const quantity = Number($("#quantityInput").value);
-  const line = $("#lineSelect").value;
-  const mold = getMold(product.moldId);
-  const requirements = calculateRequirements(productId, quantity);
-
-  if (!Number.isInteger(quantity) || quantity <= 0) {
-    addLog("ERR", "工單建立失敗：生產數量必須是正整數。");
-    state.lastAutomation = { failedAt: 0, success: false };
-    render();
-    return;
-  }
-
-  const shortage = requirements.find((item) => item.afterStock < 0);
-  if (shortage) {
-    addLog("ERR", `工單建立失敗：${shortage.name} 需求 ${formatAmount(shortage.required)} ${shortage.unit}，庫存不足。`);
-    state.lastAutomation = { failedAt: 1, success: false };
-    render();
-    return;
-  }
-
-  if (mold.status !== "Idle") {
-    addLog("WARN", `工單暫停：${mold.name} 目前${translateMoldStatus(mold.status)}，無法綁定到 ${line}。`);
-    state.lastAutomation = { failedAt: 2, success: false };
-    render();
-    return;
-  }
-
-  // 扣料寫入
-  requirements.forEach((item) => {
-    const mat = getMaterial(item.materialId);
-    mat.stock = mat.stock - item.required;
-  });
-
-  // 更新模具狀態
-  mold.status = "In_Use";
-  mold.line = line;
-  mold.eta = estimateEta(product.cycleMinutes, quantity);
-
-  // 增加產品庫存
-  product.stock = (product.stock || 0) + quantity;
-
-  const order = {
-    id: nextWorkOrderId(),
-    productId,
-    quantity,
-    line,
-    moldId: mold.id,
-    status: "已派工",
-    creator: state.role === "admin" ? "管理員" : "作業員"
-  };
-  state.workOrders.unshift(order);
-
-  addLog("INFO", `${order.id} 已建立：${product.name} ${quantity} 件，完成自動扣料並綁定 ${mold.name}。`);
-  state.lastAutomation = { failedAt: Infinity, success: true };
+  addLog("WARN", "生產交易 API 尚未完成；工單建立、扣料、產品入庫與模具更新將在後續 Transaction Issue 實作。");
+  state.lastAutomation = { failedAt: 4, success: false };
   render();
 }
 
@@ -594,38 +689,24 @@ function nextWorkOrderId() {
 
 function restockMaterials() {
   if (state.role !== "admin") return;
-  state.materials = state.materials.map((material) => ({
-    ...material,
-    stock: material.capacity
-  }));
-  addLog("INFO", "管理員已執行一鍵補料，所有材料補至容量上限。");
+  addLog("WARN", "一鍵補料需要正式庫存交易 API，將在後續 Issue 實作。");
   render();
 }
 
 function releaseScheduledMolds() {
   if (state.role !== "admin") return;
-  let count = 0;
-  state.molds = state.molds.map((mold) => {
-    if (mold.status !== "In_Use") return mold;
-    count += 1;
-    // ── DB CONSTRAINT: ENUM ──
-    const result = setMoldStatus(mold, "Idle");
-    if (!result.ok) {
-      addLog("ERR", result.error);
-      return mold;
-    }
-    return { ...mold, status: "Idle", line: "-", eta: "-" };
-  });
-  addLog("INFO", `管理員已釋放 ${count} 組使用中模具 → Idle。`);
+  addLog("WARN", "模具批次釋放需要正式排程 API，將在後續 Issue 實作。");
   render();
 }
 
-function resetState() {
+async function resetState() {
   if (state.role !== "admin") return;
-  localStorage.removeItem(STORAGE_KEY);
-  state = structuredClone(seedState);
-  state.role = "admin";
-  addLog("INFO", "管理員已重置模擬資料。");
+  addLog("WARN", "重置正式資料需要後端管理 API；目前僅重新載入 API 資料。");
+  try {
+    await refreshStateFromApi();
+  } catch (error) {
+    addLog("ERR", error.message);
+  }
   render();
 }
 
@@ -671,7 +752,7 @@ function closeModals() {
   $("#stockModal").close();
 }
 
-function saveMaterial(event) {
+async function saveMaterial(event) {
   event.preventDefault();
   if (state.role !== "admin") return;
 
@@ -688,27 +769,29 @@ function saveMaterial(event) {
     stock: 0
   };
 
-  if (originalId) {
-    const index = state.materials.findIndex(m => m.id === originalId);
-    if (index > -1) {
-      newMaterial.stock = state.materials[index].stock;
-      state.materials[index] = newMaterial;
+  try {
+    if (originalId) {
+      const existing = getMaterial(originalId);
+      if (existing) {
+        newMaterial.stock = existing.stock;
+      }
+      await apiRequest("PUT", `/materials/${encodeURIComponent(originalId)}`, toApiMaterial(newMaterial));
       addLog("INFO", `管理員已修改物料：${newMaterial.id} (${newMaterial.name})`);
+    } else {
+      await apiRequest("POST", "/materials", toApiMaterial(newMaterial));
+      addLog("INFO", `管理員已新增物料：${newMaterial.id} (${newMaterial.name})`);
     }
-  } else {
-    if (getMaterial(newId)) {
-      alert("物料 ID 已存在！");
-      return;
-    }
-    state.materials.push(newMaterial);
-    addLog("INFO", `管理員已新增物料：${newMaterial.id} (${newMaterial.name})`);
+    await refreshStateFromApi();
+    closeModals();
+  } catch (error) {
+    alert(error.message);
+    addLog("ERR", error.message);
   }
 
-  closeModals();
   render();
 }
 
-function deleteMaterial(id) {
+async function deleteMaterial(id) {
   if (state.role !== "admin") return;
   const material = getMaterial(id);
   if (!material) return;
@@ -731,12 +814,18 @@ function deleteMaterial(id) {
     return;
   }
 
-  state.materials = state.materials.filter((m) => m.id !== id);
-  addLog("INFO", `管理員已刪除物料：${material.id} (${material.name})`);
+  try {
+    await apiRequest("DELETE", `/materials/${encodeURIComponent(id)}`);
+    await refreshStateFromApi();
+    addLog("INFO", `管理員已刪除物料：${material.id} (${material.name})`);
+  } catch (error) {
+    alert(error.message);
+    addLog("ERR", error.message);
+  }
   render();
 }
 
-function saveStockAdjustment(event) {
+async function saveStockAdjustment(event) {
   event.preventDefault();
   if (state.role !== "admin") return;
 
@@ -744,20 +833,27 @@ function saveStockAdjustment(event) {
   const amount = Number($("#adjustStockAmount").value);
   const material = getMaterial(id);
 
-  if (material) {
-    const newStock = material.stock + amount;
-    // ── DB CONSTRAINT: CHECK (stock >= 0) ──
-    const result = setMaterialStock(material, newStock);
-    if (!result.ok) {
-      addLog("ERR", result.error);
-      closeModals();
-      render();
-      return;
-    }
-    addLog("INFO", `管理員已手動調整 ${material.id} 庫存：${amount > 0 ? '+' : ''}${amount} ${material.unit}，目前為 ${formatAmount(material.stock)} ${material.unit}`);
+  if (!material) return;
+
+  const updated = { ...material, stock: material.stock + amount };
+  const result = setMaterialStock(updated, updated.stock);
+  if (!result.ok) {
+    addLog("ERR", result.error);
+    closeModals();
+    render();
+    return;
   }
 
-  closeModals();
+  try {
+    await apiRequest("PUT", `/materials/${encodeURIComponent(id)}`, toApiMaterial(updated));
+    await refreshStateFromApi();
+    addLog("INFO", `管理員已透過 API 調整 ${material.id} 庫存：${amount > 0 ? '+' : ''}${amount} ${material.unit}`);
+    closeModals();
+  } catch (error) {
+    alert(error.message);
+    addLog("ERR", error.message);
+  }
+
   render();
 }
 
@@ -812,5 +908,13 @@ function bindEvents() {
   $$(".close-modal-btn").forEach(btn => btn.addEventListener("click", closeModals));
 }
 
-bindEvents();
-render();
+function startApp() {
+  bindEvents();
+  initializeApp();
+}
+
+if (document.readyState === "loading") {
+  document.addEventListener("DOMContentLoaded", startApp);
+} else {
+  startApp();
+}
