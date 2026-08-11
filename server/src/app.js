@@ -8,6 +8,7 @@ const createMoldsRouter = require("./routes/molds");
 const createBomRouter = require("./routes/bom");
 const createWorkOrdersRouter = require("./routes/workOrders");
 const createLogsRouter = require("./routes/logs");
+const createAuthRouter = require("./routes/auth");
 
 function createApp(options = {}) {
   const pool = options.pool || defaultPool;
@@ -35,6 +36,7 @@ function createApp(options = {}) {
   app.use("/api/bom", createBomRouter(pool));
   app.use("/api/work-orders", createWorkOrdersRouter(pool));
   app.use("/api/logs", createLogsRouter(pool));
+  app.use("/api/auth", createAuthRouter(pool));
 
   app.use(notFound);
   app.use(errorHandler);

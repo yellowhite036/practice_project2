@@ -8,7 +8,12 @@ process.env.DATABASE_NAME = "test_db";
 process.env.DATABASE_USER = "test_user";
 process.env.DATABASE_PASSWORD = "test_password";
 
+process.env.JWT_SECRET = "test_secret";
+
 const createApp = require("../src/app");
+const jwt = require("jsonwebtoken");
+
+const adminToken = jwt.sign({ user_id: "ADMIN-TEST", role: "admin" }, process.env.JWT_SECRET);
 
 function pgError(code) {
   const error = new Error("mock database error");
@@ -23,7 +28,12 @@ function createMockPool(options = {}) {
     molds: [{ mold_id: "MOLD-TUBE", name: "Tube Mold", status: "Idle", line: null, eta: null, product_id: null, version: 1 }],
     bom: [{ bom_id: "BOM-0001", product_id: "PRD-STEEL-TUBE", material_id: "MAT-STEEL", amount_per_unit: "2.500", version: 1 }],
     workOrders: [{ work_order_id: "WO-1", product_id: "PRD-STEEL-TUBE", quantity: 10, line: "L1", mold_id: "MOLD-TUBE", status: "Pending", creator_user_id: null, creator_name: "Operator" }],
-    logs: [{ log_id: 1, level: "INFO", message: "ok", work_order_id: null, created_by_user_id: null, created_at: "2026-08-11T00:00:00.000Z" }]
+    logs: [{ log_id: 1, level: "INFO", message: "ok", work_order_id: null, created_by_user_id: null, created_at: "2026-08-11T00:00:00.000Z" }],
+    users: [
+      { user_id: "ADMIN-1", role: "admin" },
+      { user_id: "MANAGER-1", role: "manager" },
+      { user_id: "OP-1", role: "operator" }
+    ]
   };
 
   const pool = {
@@ -37,6 +47,10 @@ function createMockPool(options = {}) {
       }
 
       if (sql === "SELECT 1") return { rows: [{ "?column?": 1 }] };
+
+      if (sql.includes("FROM users WHERE user_id = $1")) {
+        return { rows: data.users.filter((row) => row.user_id === params[0]) };
+      }
 
       if (sql.includes("FROM materials WHERE material_id = $1")) {
         return { rows: data.materials.filter((row) => row.material_id === params[0]) };
@@ -305,21 +319,29 @@ function createMockPool(options = {}) {
   return pool;
 }
 
-function request(app, method, path, body) {
+function request(app, method, path, body, options = {}) {
   const server = http.createServer(app);
 
   return new Promise((resolve, reject) => {
     server.listen(0, "127.0.0.1", () => {
       const { port } = server.address();
-      const payload = body === undefined ? null : JSON.stringify(body);
+      const payload = (body === undefined || body === null) ? null : JSON.stringify(body);
+
+      const headers = options.headers || {
+        "Authorization": `Bearer ${adminToken}`
+      };
+
+      if (payload) {
+        headers["content-type"] = "application/json";
+        headers["content-length"] = Buffer.byteLength(payload);
+      }
+
       const req = http.request({
         hostname: "127.0.0.1",
         port,
         method,
         path,
-        headers: payload
-          ? { "content-type": "application/json", "content-length": Buffer.byteLength(payload) }
-          : undefined
+        headers
       }, (res) => {
         let raw = "";
         res.setEncoding("utf8");
@@ -735,6 +757,113 @@ test('Work Order START rollback on error', async () => {
   assert.equal(res.statusCode, 500);
   assert.equal(rollbackCount, 1);
 });
+
+// --- Auth Tests ---
+const managerToken = jwt.sign({ user_id: "MANAGER-1", role: "manager" }, process.env.JWT_SECRET);
+const operatorToken = jwt.sign({ user_id: "OP-1", role: "operator" }, process.env.JWT_SECRET);
+const expiredToken = jwt.sign({ user_id: "ADMIN-1", role: "admin" }, process.env.JWT_SECRET, { expiresIn: "-1h" });
+const invalidToken = "invalid.token.here";
+
+test("1. login ?å??–å? JWT", async () => {
+  const app = createApp({ pool: createMockPool() });
+  const res = await request(app, "POST", "/api/auth/login", { user_id: "ADMIN-1" }, { headers: {} });
+  assert.equal(res.statusCode, 200);
+  assert.equal(typeof res.body.token, "string");
+  assert.equal(res.body.user.role, "admin");
+});
+
+test("2. login ?¾ä???user -> 401", async () => {
+  const app = createApp({ pool: createMockPool() });
+  const res = await request(app, "POST", "/api/auth/login", { user_id: "UNKNOWN" }, { headers: {} });
+  assert.equal(res.statusCode, 401);
+});
+
+test("3. ??Authorization header -> 401", async () => {
+  const app = createApp({ pool: createMockPool() });
+  const res = await request(app, "GET", "/api/materials", null, { headers: {} });
+  assert.equal(res.statusCode, 401);
+});
+
+test("4. invalid JWT -> 401", async () => {
+  const app = createApp({ pool: createMockPool() });
+  const res = await request(app, "GET", "/api/materials", null, { headers: { Authorization: `Bearer ${invalidToken}` } });
+  assert.equal(res.statusCode, 401);
+});
+
+test("5. expired JWT -> 401", async () => {
+  const app = createApp({ pool: createMockPool() });
+  const res = await request(app, "GET", "/api/materials", null, { headers: { Authorization: `Bearer ${expiredToken}` } });
+  assert.equal(res.statusCode, 401);
+});
+
+test("6. admin ?¯ä»¥ä¿®æ”¹ materials", async () => {
+  const app = createApp({ pool: createMockPool() });
+  const res = await request(app, "PUT", "/api/materials/MAT-STEEL", { name: "Updated", unit: "kg", version: 1 }, { headers: { Authorization: `Bearer ${adminToken}` } });
+  assert.equal(res.statusCode, 200);
+});
+
+test("7. manager ?¯ä»¥ä¿®æ”¹ materials", async () => {
+  const app = createApp({ pool: createMockPool() });
+  const res = await request(app, "PUT", "/api/materials/MAT-STEEL", { name: "Updated", unit: "kg", version: 1 }, { headers: { Authorization: `Bearer ${managerToken}` } });
+  assert.equal(res.statusCode, 200);
+});
+
+test("8. operator ä¿®æ”¹ materials -> 403", async () => {
+  const app = createApp({ pool: createMockPool() });
+  const res = await request(app, "PUT", "/api/materials/MAT-STEEL", { name: "Updated", unit: "kg", version: 1 }, { headers: { Authorization: `Bearer ${operatorToken}` } });
+  assert.equal(res.statusCode, 403);
+});
+
+test("9. operator ?¯ä»¥ GET materials", async () => {
+  const app = createApp({ pool: createMockPool() });
+  const res = await request(app, "GET", "/api/materials", null, { headers: { Authorization: `Bearer ${operatorToken}` } });
+  assert.equal(res.statusCode, 200);
+});
+
+test("10. operator ?¯ä»¥ start work order", async () => {
+  const app = createApp({ pool: createMockPool() });
+  const res = await request(app, "POST", "/api/work-orders/WO-1/start", null, { headers: { Authorization: `Bearer ${operatorToken}` } });
+  assert.equal(res.statusCode, 200);
+});
+
+test("11. operator ?¯ä»¥ complete work order", async () => {
+  const pool = createMockPool();
+  await pool.query("UPDATE work_orders SET status = 'In_Progress' WHERE work_order_id = 'WO-1'");
+  const app = createApp({ pool });
+  const res = await request(app, "POST", "/api/work-orders/WO-1/complete", null, { headers: { Authorization: `Bearer ${operatorToken}` } });
+  assert.equal(res.statusCode, 200);
+});
+
+test("12. operator reject work order -> 403", async () => {
+  const app = createApp({ pool: createMockPool() });
+  const res = await request(app, "POST", "/api/work-orders/WO-1/reject", null, { headers: { Authorization: `Bearer ${operatorToken}` } });
+  assert.equal(res.statusCode, 403);
+});
+
+test("13. manager ?¯ä»¥ reject work order", async () => {
+  const app = createApp({ pool: createMockPool() });
+  const res = await request(app, "POST", "/api/work-orders/WO-1/reject", null, { headers: { Authorization: `Bearer ${managerToken}` } });
+  assert.equal(res.statusCode, 200);
+});
+
+test("14. operator GET logs -> 403", async () => {
+  const app = createApp({ pool: createMockPool() });
+  const res = await request(app, "GET", "/api/logs", null, { headers: { Authorization: `Bearer ${operatorToken}` } });
+  assert.equal(res.statusCode, 403);
+});
+
+test("15. manager GET logs -> 200", async () => {
+  const app = createApp({ pool: createMockPool() });
+  const res = await request(app, "GET", "/api/logs", null, { headers: { Authorization: `Bearer ${managerToken}` } });
+  assert.equal(res.statusCode, 200);
+});
+
+test("16. admin GET logs -> 200", async () => {
+  const app = createApp({ pool: createMockPool() });
+  const res = await request(app, "GET", "/api/logs", null, { headers: { Authorization: `Bearer ${adminToken}` } });
+  assert.equal(res.statusCode, 200);
+});
+
 
 test('Work Order COMPLETE rollback on error', async () => {
   let rollbackCount = 0;

@@ -1,5 +1,6 @@
 const { Router } = require("express");
 const { createHttpError } = require("../middleware/errorHandler");
+const { requireAuth, requireRole } = require("../middleware/auth");
 
 const asyncRoute = (handler) => (req, res, next) => {
   Promise.resolve(handler(req, res, next)).catch(next);
@@ -26,12 +27,12 @@ function validateMold(body) {
 module.exports = function createMoldsRouter(pool) {
   const router = Router();
 
-  router.get("/", asyncRoute(async (req, res) => {
+  router.get("/", requireAuth, requireRole(["admin", "manager", "operator"]), asyncRoute(async (req, res) => {
     const { rows } = await pool.query(`SELECT ${MOLD_COLUMNS} FROM molds ORDER BY mold_id`);
     res.json(rows);
   }));
 
-  router.get("/:id", asyncRoute(async (req, res) => {
+  router.get("/:id", requireAuth, requireRole(["admin", "manager", "operator"]), asyncRoute(async (req, res) => {
     const { rows } = await pool.query(
       `SELECT ${MOLD_COLUMNS} FROM molds WHERE mold_id = $1`,
       [req.params.id]
@@ -40,7 +41,7 @@ module.exports = function createMoldsRouter(pool) {
     res.json(rows[0]);
   }));
 
-  router.post("/", asyncRoute(async (req, res) => {
+  router.post("/", requireAuth, requireRole(["admin", "manager"]), asyncRoute(async (req, res) => {
     const error = validateMold(req.body);
     if (error) throw createHttpError(400, error);
 
@@ -56,7 +57,7 @@ module.exports = function createMoldsRouter(pool) {
     res.status(201).json(rows[0]);
   }));
 
-  router.put("/:id", asyncRoute(async (req, res) => {
+  router.put("/:id", requireAuth, requireRole(["admin", "manager"]), asyncRoute(async (req, res) => {
     const error = validateMold(req.body);
     if (error) throw createHttpError(400, error);
     if (req.body.version === undefined) throw createHttpError(400, "version is required");
@@ -73,7 +74,7 @@ module.exports = function createMoldsRouter(pool) {
     res.json(rows[0]);
   }));
 
-  router.delete("/:id", asyncRoute(async (req, res) => {
+  router.delete("/:id", requireAuth, requireRole(["admin", "manager"]), asyncRoute(async (req, res) => {
     const { rows } = await pool.query(
       "DELETE FROM molds WHERE mold_id = $1 RETURNING mold_id",
       [req.params.id]

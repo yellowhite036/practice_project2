@@ -1,5 +1,6 @@
 const { Router } = require("express");
 const { createHttpError } = require("../middleware/errorHandler");
+const { requireAuth, requireRole } = require("../middleware/auth");
 
 const asyncRoute = (handler) => (req, res, next) => {
   Promise.resolve(handler(req, res, next)).catch(next);
@@ -30,12 +31,12 @@ function validateMaterial(body) {
 module.exports = function createMaterialsRouter(pool) {
   const router = Router();
 
-  router.get("/", asyncRoute(async (req, res) => {
+  router.get("/", requireAuth, requireRole(["admin", "manager", "operator"]), asyncRoute(async (req, res) => {
     const { rows } = await pool.query(`SELECT ${MATERIAL_COLUMNS} FROM materials ORDER BY material_id`);
     res.json(rows);
   }));
 
-  router.get("/:id", asyncRoute(async (req, res) => {
+  router.get("/:id", requireAuth, requireRole(["admin", "manager", "operator"]), asyncRoute(async (req, res) => {
     const { rows } = await pool.query(
       `SELECT ${MATERIAL_COLUMNS} FROM materials WHERE material_id = $1`,
       [req.params.id]
@@ -44,7 +45,7 @@ module.exports = function createMaterialsRouter(pool) {
     res.json(rows[0]);
   }));
 
-  router.post("/", asyncRoute(async (req, res) => {
+  router.post("/", requireAuth, requireRole(["admin", "manager"]), asyncRoute(async (req, res) => {
     const error = validateMaterial(req.body);
     if (error) throw createHttpError(400, error);
 
@@ -60,7 +61,7 @@ module.exports = function createMaterialsRouter(pool) {
     res.status(201).json(rows[0]);
   }));
 
-  router.put("/:id", asyncRoute(async (req, res) => {
+  router.put("/:id", requireAuth, requireRole(["admin", "manager"]), asyncRoute(async (req, res) => {
     const error = validateMaterial(req.body);
     if (error) throw createHttpError(400, error);
     if (req.body.version === undefined) throw createHttpError(400, "version is required");
@@ -77,7 +78,7 @@ module.exports = function createMaterialsRouter(pool) {
     res.json(rows[0]);
   }));
 
-  router.delete("/:id", asyncRoute(async (req, res) => {
+  router.delete("/:id", requireAuth, requireRole(["admin", "manager"]), asyncRoute(async (req, res) => {
     const { rows } = await pool.query(
       "DELETE FROM materials WHERE material_id = $1 RETURNING material_id",
       [req.params.id]

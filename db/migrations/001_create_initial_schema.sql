@@ -4,7 +4,7 @@ CREATE TABLE users (
   role TEXT NOT NULL,
   created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
   updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-  CONSTRAINT users_role_check CHECK (role IN ('operator', 'admin'))
+  CONSTRAINT users_role_check CHECK (role IN ('operator', 'admin', 'manager'))
 );
 
 CREATE TABLE materials (

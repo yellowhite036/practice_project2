@@ -1,5 +1,6 @@
 const { Router } = require("express");
 const { createHttpError } = require("../middleware/errorHandler");
+const { requireAuth, requireRole } = require("../middleware/auth");
 
 const asyncRoute = (handler) => (req, res, next) => {
   Promise.resolve(handler(req, res, next)).catch(next);
@@ -17,12 +18,12 @@ const LOG_COLUMNS = `
 module.exports = function createLogsRouter(pool) {
   const router = Router();
 
-  router.get("/", asyncRoute(async (req, res) => {
+  router.get("/", requireAuth, requireRole(["admin", "manager"]), asyncRoute(async (req, res) => {
     const { rows } = await pool.query(`SELECT ${LOG_COLUMNS} FROM system_logs ORDER BY created_at DESC, log_id DESC`);
     res.json(rows);
   }));
 
-  router.get("/:id", asyncRoute(async (req, res) => {
+  router.get("/:id", requireAuth, requireRole(["admin", "manager"]), asyncRoute(async (req, res) => {
     const { rows } = await pool.query(
       `SELECT ${LOG_COLUMNS} FROM system_logs WHERE log_id = $1`,
       [req.params.id]

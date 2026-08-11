@@ -1,5 +1,6 @@
 const { Router } = require("express");
 const { createHttpError } = require("../middleware/errorHandler");
+const { requireAuth, requireRole } = require("../middleware/auth");
 const withTransaction = require("../db/withTransaction");
 
 const asyncRoute = (handler) => (req, res, next) => {
@@ -49,12 +50,12 @@ function validateWorkOrder(body) {
 module.exports = function createWorkOrdersRouter(pool) {
   const router = Router();
 
-  router.get("/", asyncRoute(async (req, res) => {
+  router.get("/", requireAuth, requireRole(["admin", "manager", "operator"]), asyncRoute(async (req, res) => {
     const { rows } = await pool.query(`SELECT ${WORK_ORDER_COLUMNS} FROM work_orders ORDER BY created_at DESC, work_order_id DESC`);
     res.json(rows);
   }));
 
-  router.get("/:id", asyncRoute(async (req, res) => {
+  router.get("/:id", requireAuth, requireRole(["admin", "manager", "operator"]), asyncRoute(async (req, res) => {
     const { rows } = await pool.query(
       `SELECT ${WORK_ORDER_COLUMNS} FROM work_orders WHERE work_order_id = $1`,
       [req.params.id]
@@ -63,7 +64,7 @@ module.exports = function createWorkOrdersRouter(pool) {
     res.json(rows[0]);
   }));
 
-  router.post("/", asyncRoute(async (req, res) => {
+  router.post("/", requireAuth, requireRole(["admin", "manager"]), asyncRoute(async (req, res) => {
     const validationError = validateWorkOrder(req.body);
     if (validationError) throw createHttpError(400, validationError);
 
@@ -187,7 +188,7 @@ module.exports = function createWorkOrdersRouter(pool) {
     res.status(201).json(workOrder);
   }));
 
-  router.put("/:id", asyncRoute(async (req, res) => {
+  router.put("/:id", requireAuth, requireRole(["admin", "manager"]), asyncRoute(async (req, res) => {
     // For PUT, validateWorkOrder expects work_order_id, so we inject it into the body for validation
     const bodyForValidation = { ...req.body, work_order_id: req.params.id };
     const error = validateWorkOrder(bodyForValidation);
@@ -205,7 +206,7 @@ module.exports = function createWorkOrdersRouter(pool) {
     res.json(rows[0]);
   }));
 
-  router.delete("/:id", asyncRoute(async (req, res) => {
+  router.delete("/:id", requireAuth, requireRole(["admin", "manager"]), asyncRoute(async (req, res) => {
     const { rows } = await pool.query(
       `DELETE FROM work_orders WHERE work_order_id = $1 RETURNING ${WORK_ORDER_COLUMNS}`,
       [req.params.id]
@@ -219,7 +220,7 @@ module.exports = function createWorkOrdersRouter(pool) {
    * Transition: Pending -> In_Progress
    * No stock/mold changes.
    */
-  router.post("/:id/start", asyncRoute(async (req, res) => {
+  router.post("/:id/start", requireAuth, requireRole(["admin", "manager", "operator"]), asyncRoute(async (req, res) => {
     const workOrderId = req.params.id;
 
     const txFn = pool.withTransaction
@@ -268,7 +269,7 @@ module.exports = function createWorkOrdersRouter(pool) {
    * Transition: Pending or In_Progress -> Completed
    * Releases Mold (status -> Idle). No stock changes.
    */
-  router.post("/:id/complete", asyncRoute(async (req, res) => {
+  router.post("/:id/complete", requireAuth, requireRole(["admin", "manager", "operator"]), asyncRoute(async (req, res) => {
     const workOrderId = req.params.id;
 
     const txFn = pool.withTransaction
@@ -330,7 +331,7 @@ module.exports = function createWorkOrdersRouter(pool) {
    * Reverses inventory: refund materials (restock), deduct product stock,
    * inserts inventory_transactions refund records, releases Mold (Idle).
    */
-  router.post("/:id/reject", asyncRoute(async (req, res) => {
+  router.post("/:id/reject", requireAuth, requireRole(["admin", "manager"]), asyncRoute(async (req, res) => {
     const workOrderId = req.params.id;
 
     const txFn = pool.withTransaction
