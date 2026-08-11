@@ -46,6 +46,15 @@ module.exports = function createBomRouter(pool) {
     res.json(rows);
   }));
 
+  router.get("/:id", asyncRoute(async (req, res) => {
+    const { rows } = await pool.query(
+      `SELECT ${BOM_COLUMNS} FROM bom_table WHERE bom_id = $1`,
+      [req.params.id]
+    );
+    if (rows.length === 0) throw createHttpError(404, "BOM not found");
+    res.json(rows[0]);
+  }));
+
   router.post("/", asyncRoute(async (req, res) => {
     const error = validateBom(req.body);
     if (error) throw createHttpError(400, error);
@@ -89,7 +98,7 @@ module.exports = function createBomRouter(pool) {
        RETURNING ${BOM_COLUMNS}`,
       [product_id, material_id, amount_per_unit, req.params.id]
     );
-    if (rows.length === 0) throw createHttpError(404, "BOM row not found");
+    if (rows.length === 0) throw createHttpError(404, "BOM not found");
     res.json(rows[0]);
   }));
 
@@ -98,7 +107,7 @@ module.exports = function createBomRouter(pool) {
       "DELETE FROM bom_table WHERE bom_id = $1 RETURNING bom_id",
       [req.params.id]
     );
-    if (rows.length === 0) throw createHttpError(404, "BOM row not found");
+    if (rows.length === 0) throw createHttpError(404, "BOM not found");
     res.json({ deleted: true, id: rows[0].bom_id });
   }));
 

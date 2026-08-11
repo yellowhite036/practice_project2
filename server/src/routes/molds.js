@@ -72,5 +72,14 @@ module.exports = function createMoldsRouter(pool) {
     res.json(rows[0]);
   }));
 
+  router.delete("/:id", asyncRoute(async (req, res) => {
+    const { rows } = await pool.query(
+      "DELETE FROM molds WHERE mold_id = $1 RETURNING mold_id",
+      [req.params.id]
+    );
+    if (rows.length === 0) throw createHttpError(404, "Mold not found");
+    res.json({ deleted: true, id: rows[0].mold_id });
+  }));
+
   return router;
 };

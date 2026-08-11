@@ -32,6 +32,8 @@ function createMockPool(options = {}) {
       }
       if (sql.includes("FROM materials ORDER BY")) return { rows: data.materials };
       if (sql.includes("INSERT INTO materials")) return { rows: [{ ...data.materials[0], material_id: params[0], name: params[1], unit: params[2] }] };
+      if (sql.includes("UPDATE materials")) return { rows: params[6] === "UNKNOWN" ? [] : [{ ...data.materials[0], name: params[0], unit: params[1], stock: params[2] }] };
+      if (sql.includes("DELETE FROM materials")) return { rows: params[0] === "UNKNOWN" ? [] : [{ material_id: params[0] }] };
 
       if (sql.includes("FROM products WHERE product_id = $1")) {
         return { rows: data.products.filter((row) => row.product_id === params[0]) };
@@ -45,6 +47,7 @@ function createMockPool(options = {}) {
         return { rows: data.molds.filter((row) => row.mold_id === params[0]) };
       }
       if (sql.includes("FROM molds ORDER BY")) return { rows: data.molds };
+      if (sql.includes("DELETE FROM molds")) return { rows: params[0] === "UNKNOWN" ? [] : [{ mold_id: params[0] }] };
 
       if (sql.includes("SELECT material_id FROM materials")) {
         return { rows: data.materials.filter((row) => row.material_id === params[0]).map((row) => ({ material_id: row.material_id })) };
@@ -56,6 +59,9 @@ function createMockPool(options = {}) {
       if (sql.includes("FROM bom_table WHERE product_id = $1 ORDER BY")) {
         return { rows: data.bom.filter((row) => row.product_id === params[0]) };
       }
+      if (sql.includes("FROM bom_table WHERE bom_id = $1")) {
+        return { rows: data.bom.filter((row) => row.bom_id === params[0]) };
+      }
       if (sql.includes("FROM bom_table ORDER BY")) return { rows: data.bom };
       if (sql.includes("DELETE FROM bom_table")) return { rows: params[0] === "BOM-404" ? [] : [{ bom_id: params[0] }] };
 
@@ -64,6 +70,9 @@ function createMockPool(options = {}) {
       }
       if (sql.includes("FROM work_orders ORDER BY")) return { rows: data.workOrders };
 
+      if (sql.includes("FROM system_logs WHERE log_id = $1")) {
+        return { rows: data.logs.filter((row) => String(row.log_id) === String(params[0])) };
+      }
       if (sql.includes("FROM system_logs ORDER BY")) return { rows: data.logs };
 
       return { rows: [] };
@@ -136,18 +145,79 @@ test("GET list endpoints return arrays", async () => {
   }
 });
 
+test("materials CRUD endpoints return expected status codes", async () => {
+  const app = createApp({ pool: createMockPool() });
+
+  const getOne = await request(app, "GET", "/api/materials/MAT-STEEL");
+  assert.equal(getOne.statusCode, 200);
+  assert.equal(getOne.body.material_id, "MAT-STEEL");
+
+  const created = await request(app, "POST", "/api/materials", {
+    material_id: "MAT-COPPER",
+    name: "Copper",
+    unit: "kg",
+    stock: 10,
+    capacity: 100,
+    safety_stock: 5,
+    location: "A-02-01"
+  });
+  assert.equal(created.statusCode, 201);
+  assert.equal(created.body.material_id, "MAT-COPPER");
+
+  const updated = await request(app, "PUT", "/api/materials/MAT-STEEL", {
+    name: "Steel Updated",
+    unit: "kg",
+    stock: 11,
+    capacity: 100,
+    safety_stock: 5,
+    location: "A-02-02"
+  });
+  assert.equal(updated.statusCode, 200);
+  assert.equal(updated.body.name, "Steel Updated");
+
+  const deleted = await request(app, "DELETE", "/api/materials/MAT-STEEL");
+  assert.equal(deleted.statusCode, 200);
+  assert.deepEqual(deleted.body, { deleted: true, id: "MAT-STEEL" });
+});
+
+test("detail query endpoints return rows", async () => {
+  const app = createApp({ pool: createMockPool() });
+  const cases = [
+    ["/api/products/PRD-STEEL-TUBE", "product_id", "PRD-STEEL-TUBE"],
+    ["/api/molds/MOLD-TUBE", "mold_id", "MOLD-TUBE"],
+    ["/api/bom/BOM-0001", "bom_id", "BOM-0001"],
+    ["/api/bom/product/PRD-STEEL-TUBE", null, null],
+    ["/api/logs/1", "log_id", 1]
+  ];
+
+  for (const [path, key, value] of cases) {
+    const res = await request(app, "GET", path);
+    assert.equal(res.statusCode, 200, path);
+    if (key) assert.equal(res.body[key], value, path);
+    else assert.equal(Array.isArray(res.body), true, path);
+  }
+});
+
+test("mold delete endpoint returns JSON", async () => {
+  const app = createApp({ pool: createMockPool() });
+  const res = await request(app, "DELETE", "/api/molds/MOLD-TUBE");
+  assert.equal(res.statusCode, 200);
+  assert.deepEqual(res.body, { deleted: true, id: "MOLD-TUBE" });
+});
+
 test("unknown ids return 404", async () => {
   const app = createApp({ pool: createMockPool() });
   const cases = [
     ["/api/materials/UNKNOWN", "Material not found"],
     ["/api/products/UNKNOWN", "Product not found"],
     ["/api/molds/UNKNOWN", "Mold not found"],
-    ["/api/bom/BOM-404", "BOM row not found"]
+    ["/api/bom/BOM-404", "BOM not found"],
+    ["/api/work-orders/UNKNOWN", "Work order not found"],
+    ["/api/logs/404", "Log not found"]
   ];
 
   for (const [path, message] of cases) {
-    const method = path.startsWith("/api/bom/") ? "DELETE" : "GET";
-    const res = await request(app, method, path);
+    const res = await request(app, "GET", path);
     assert.equal(res.statusCode, 404, path);
     assert.deepEqual(res.body, { error: message }, path);
   }
