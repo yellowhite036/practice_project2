@@ -1,5 +1,6 @@
 const { Router } = require("express");
 const { createHttpError } = require("../middleware/errorHandler");
+const withTransaction = require("../db/withTransaction");
 
 const asyncRoute = (handler) => (req, res, next) => {
   Promise.resolve(handler(req, res, next)).catch(next);
@@ -18,6 +19,33 @@ const WORK_ORDER_COLUMNS = `
   updated_at
 `;
 
+function validateWorkOrder(body) {
+  if (!body.work_order_id) return "work_order_id is required";
+  if (!body.product_id) return "product_id is required";
+  if (body.quantity === undefined || Number(body.quantity) <= 0) return "quantity must be greater than 0";
+  if (!body.line) return "line is required";
+  if (!body.mold_id) return "mold_id is required";
+  return null;
+}
+
+/**
+ * Production flow inside a single PostgreSQL Transaction:
+ *
+ * BEGIN
+ * 1. Validate Product exists
+ * 2. Get BOM items for the product
+ * 3. Lock Materials via SELECT ... FOR UPDATE (batch)
+ * 4. Check each Material stock >= required amount
+ * 5. Lock Mold via SELECT ... FOR UPDATE
+ * 6. Check Mold status === 'Idle'
+ * 7. Deduct Material stock for each BOM item
+ * 8. Create Inventory Transaction records (consume)
+ * 9. Increase Product stock
+ * 10. Update Mold status to 'In_Use'
+ * 11. Insert Work Order (status = 'Pending')
+ * 12. Insert System Log
+ * COMMIT  (or ROLLBACK on any error)
+ */
 module.exports = function createWorkOrdersRouter(pool) {
   const router = Router();
 
@@ -33,6 +61,130 @@ module.exports = function createWorkOrdersRouter(pool) {
     );
     if (rows.length === 0) throw createHttpError(404, "Work order not found");
     res.json(rows[0]);
+  }));
+
+  router.post("/", asyncRoute(async (req, res) => {
+    const validationError = validateWorkOrder(req.body);
+    if (validationError) throw createHttpError(400, validationError);
+
+    const {
+      work_order_id,
+      product_id,
+      quantity,
+      line,
+      mold_id,
+      creator_user_id = null,
+      creator_name = null
+    } = req.body;
+
+    const txFn = pool.withTransaction
+      ? (cb) => pool.withTransaction(cb)
+      : (cb) => withTransaction(pool, cb);
+
+    const workOrder = await txFn(async (client) => {
+      // 1. Validate Product
+      const productResult = await client.query(
+        "SELECT product_id FROM products WHERE product_id = $1",
+        [product_id]
+      );
+      if (productResult.rows.length === 0) {
+        throw createHttpError(400, "Product not found");
+      }
+
+      // 2. Get BOM items
+      const bomResult = await client.query(
+        "SELECT material_id, amount_per_unit FROM bom_table WHERE product_id = $1 ORDER BY material_id",
+        [product_id]
+      );
+      const bomItems = bomResult.rows;
+
+      // 3. Lock Materials FOR UPDATE (pessimistic lock), ordered by material_id to avoid deadlocks
+      const materialIds = bomItems.map((b) => b.material_id);
+      let lockedMaterials = [];
+      if (materialIds.length > 0) {
+        const lockResult = await client.query(
+          "SELECT material_id, stock FROM materials WHERE material_id = ANY($1) ORDER BY material_id FOR UPDATE",
+          [materialIds]
+        );
+        lockedMaterials = lockResult.rows;
+      }
+
+      // 4. Check each material has sufficient stock
+      for (const bomItem of bomItems) {
+        const required = Number(bomItem.amount_per_unit) * Number(quantity);
+        const material = lockedMaterials.find((m) => m.material_id === bomItem.material_id);
+        if (!material) {
+          throw createHttpError(400, `Material ${bomItem.material_id} not found`);
+        }
+        const currentStock = Number(material.stock);
+        if (currentStock < required) {
+          throw createHttpError(409, `Insufficient stock for material ${bomItem.material_id}`);
+        }
+      }
+
+      // 5. Lock Mold FOR UPDATE (pessimistic lock)
+      const moldResult = await client.query(
+        "SELECT status FROM molds WHERE mold_id = $1 FOR UPDATE",
+        [mold_id]
+      );
+      if (moldResult.rows.length === 0) {
+        throw createHttpError(400, "Mold not found");
+      }
+
+      // 6. Check Mold status
+      if (moldResult.rows[0].status !== "Idle") {
+        throw createHttpError(409, "Mold is currently in use");
+      }
+
+      // 7. Deduct Material stock & 8. Create Inventory Transaction records
+      for (const bomItem of bomItems) {
+        const required = Number(bomItem.amount_per_unit) * Number(quantity);
+
+        // Deduct material stock
+        await client.query(
+          "UPDATE materials SET stock = stock - $1, updated_at = now() WHERE material_id = $2",
+          [required, bomItem.material_id]
+        );
+
+        // Insert Inventory Transaction (consume)
+        await client.query(
+          `INSERT INTO inventory_transactions (work_order_id, material_id, product_id, transaction_type, quantity, created_by_user_id)
+           VALUES ($1, $2, $3, $4, $5, $6)`,
+          [work_order_id, bomItem.material_id, product_id, "consume", required, creator_user_id]
+        );
+      }
+
+      // 9. Increase Product stock
+      await client.query(
+        "UPDATE products SET stock = stock + $1, updated_at = now() WHERE product_id = $2",
+        [quantity, product_id]
+      );
+
+      // 10. Update Mold status to In_Use
+      await client.query(
+        "UPDATE molds SET status = 'In_Use', product_id = $1, updated_at = now() WHERE mold_id = $2",
+        [product_id, mold_id]
+      );
+
+      // 11. Insert Work Order
+      const woResult = await client.query(
+        `INSERT INTO work_orders (work_order_id, product_id, quantity, line, mold_id, status, creator_user_id, creator_name)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+         RETURNING ${WORK_ORDER_COLUMNS}`,
+        [work_order_id, product_id, quantity, line, mold_id, "Pending", creator_user_id, creator_name]
+      );
+
+      // 12. Insert System Log
+      await client.query(
+        `INSERT INTO system_logs (level, message, work_order_id, created_by_user_id)
+         VALUES ($1, $2, $3, $4)`,
+        ["INFO", `Work order ${work_order_id} created for product ${product_id}`, work_order_id, creator_user_id]
+      );
+
+      return woResult.rows[0];
+    });
+
+    res.status(201).json(workOrder);
   }));
 
   return router;

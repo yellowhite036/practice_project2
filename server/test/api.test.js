@@ -26,11 +26,15 @@ function createMockPool(options = {}) {
     logs: [{ log_id: 1, level: "INFO", message: "ok", work_order_id: null, created_by_user_id: null, created_at: "2026-08-11T00:00:00.000Z" }]
   };
 
-  return {
+  const pool = {
     async query(sql, params = []) {
       if (options.failHealth && sql === "SELECT 1") throw new Error("database unavailable");
       if (options.failAll) throw new Error("database unavailable");
-      if (options.pgErrorCode) throw pgError(options.pgErrorCode);
+      if (options.pgErrorCode) {
+        const err = new Error("mock database error");
+        err.code = options.pgErrorCode;
+        throw err;
+      }
 
       if (sql === "SELECT 1") return { rows: [{ "?column?": 1 }] };
 
@@ -55,6 +59,22 @@ function createMockPool(options = {}) {
       }
       if (sql.includes("FROM molds ORDER BY")) return { rows: data.molds };
       if (sql.includes("DELETE FROM molds")) return { rows: params[0] === "UNKNOWN" ? [] : [{ mold_id: params[0] }] };
+      if (sql.includes("UPDATE molds SET status")) {
+        if (params.length === 0) {
+          // Literal SQL: UPDATE molds SET status = 'In_Use' WHERE mold_id = 'MOLD-TUBE'
+          const match = sql.match(/WHERE mold_id = '([^']+)'/);
+          const statusMatch = sql.match(/status = '([^']+)'/);
+          if (match && statusMatch) {
+            const mold = data.molds.find((m) => m.mold_id === match[1]);
+            if (mold) mold.status = statusMatch[1];
+          }
+        } else {
+          // Parameterized from transaction: UPDATE molds SET status = 'In_Use', product_id = $1 WHERE mold_id = $2
+          const mold = data.molds.find((m) => m.mold_id === params[params.length - 1]);
+          if (mold) mold.status = "In_Use";
+        }
+        return { rows: [] };
+      }
 
       if (sql.includes("SELECT material_id FROM materials")) {
         return { rows: data.materials.filter((row) => row.material_id === params[0]).map((row) => ({ material_id: row.material_id })) };
@@ -85,6 +105,91 @@ function createMockPool(options = {}) {
       return { rows: [] };
     }
   };
+
+  pool.connect = async function() {
+    let inTransaction = false;
+    return {
+      query: async function(sql, params = []) {
+        if (sql === "BEGIN") { inTransaction = true; return { rows: [] }; }
+        if (sql === "COMMIT" || sql === "ROLLBACK") { inTransaction = false; return { rows: [] }; }
+
+        if (sql.includes("SELECT product_id FROM products WHERE product_id = $1")) {
+          return { rows: data.products.filter(p => p.product_id === params[0]) };
+        }
+
+        if (sql.includes("SELECT material_id, amount_per_unit FROM bom_table WHERE product_id = $1 ORDER BY material_id")) {
+          return { rows: data.bom.filter(b => b.product_id === params[0]) };
+        }
+
+        if (sql.includes("SELECT material_id, stock FROM materials WHERE material_id = ANY($1) ORDER BY material_id FOR UPDATE")) {
+          return { rows: data.materials.filter(m => params[0].includes(m.material_id)) };
+        }
+
+        if (sql.includes("UPDATE materials SET stock = stock - $1, updated_at = now() WHERE material_id = $2")) {
+          if (options.failUpdateMaterial) throw new Error("failUpdateMaterial");
+          const m = data.materials.find(x => x.material_id === params[1]);
+          if (m) m.stock = Number(m.stock) - params[0];
+          return { rows: [m] };
+        }
+
+        if (sql.includes("INSERT INTO inventory_transactions")) {
+          if (options.failInventoryTransaction) throw new Error("failInventoryTransaction");
+          return { rows: [{}] };
+        }
+
+        if (sql.includes("SELECT status FROM molds WHERE mold_id = $1 FOR UPDATE")) {
+          return { rows: data.molds.filter(m => m.mold_id === params[0]) };
+        }
+
+        if (sql.includes("UPDATE products SET stock = stock + $1")) {
+          if (options.failUpdateProduct) throw new Error("failUpdateProduct");
+          const p = data.products.find(x => x.product_id === params[1]);
+          if (p) p.stock += params[0];
+          return { rows: [p] };
+        }
+
+        if (sql.includes("UPDATE molds SET status = 'In_Use'")) {
+          if (options.failUpdateMold) throw new Error("failUpdateMold");
+          const m = data.molds.find(x => x.mold_id === params[0]);
+          if (m) m.status = 'In_Use';
+          return { rows: [m] };
+        }
+
+        if (sql.includes("INSERT INTO work_orders")) {
+          if (options.failWorkOrder) throw new Error("failWorkOrder");
+          return { rows: [{ work_order_id: params[0], product_id: params[1], quantity: params[2], line: params[3], mold_id: params[4], status: params[5], creator_user_id: params[6], creator_name: params[7] }] };
+        }
+
+        if (sql.includes("INSERT INTO system_logs")) {
+          if (options.failSystemLog) throw new Error("failSystemLog");
+          return { rows: [{}] };
+        }
+
+        return pool.query(sql, params);
+      },
+      release: function() {}
+    };
+  };
+
+  pool.withTransaction = async function(callback) {
+    const client = await this.connect();
+    try {
+      await client.query("BEGIN");
+      if (options.onBegin) options.onBegin();
+      const result = await callback(client);
+      await client.query("COMMIT");
+      if (options.onCommit) options.onCommit();
+      return result;
+    } catch (err) {
+      await client.query("ROLLBACK");
+      if (options.onRollback) options.onRollback();
+      throw err;
+    } finally {
+      client.release();
+    }
+  };
+
+  return pool;
 }
 
 function request(app, method, path, body) {
@@ -280,4 +385,98 @@ test("PostgreSQL not-null violation 23502 returns 400", async () => {
   const res = await request(app, "GET", "/api/materials");
   assert.equal(res.statusCode, 400);
   assert.deepEqual(res.body, { error: "Required database field is missing" });
+});
+
+test("Work Order creation uses transaction and succeeds", async () => {
+  let beginCount = 0, commitCount = 0, rollbackCount = 0;
+  const poolOpts = {
+    onBegin: () => beginCount++,
+    onCommit: () => commitCount++,
+    onRollback: () => rollbackCount++
+  };
+  const app = createApp({ pool: createMockPool(poolOpts) });
+  const res = await request(app, "POST", "/api/work-orders", {
+    work_order_id: "WO-NEW",
+    product_id: "PRD-STEEL-TUBE",
+    quantity: 100,
+    line: "L1",
+    mold_id: "MOLD-TUBE"
+  });
+
+  assert.equal(res.statusCode, 201);
+  assert.equal(res.body.work_order_id, "WO-NEW");
+  assert.equal(beginCount, 1);
+  assert.equal(commitCount, 1);
+  assert.equal(rollbackCount, 0);
+});
+
+test("Work Order creation fails and rolls back on insufficient material stock", async () => {
+  let rollbackCount = 0;
+  const app = createApp({ pool: createMockPool({ onRollback: () => rollbackCount++ }) });
+
+  // quantity 1000 * 2.5 = 2500, but stock is 1500
+  const res = await request(app, "POST", "/api/work-orders", {
+    work_order_id: "WO-NEW",
+    product_id: "PRD-STEEL-TUBE",
+    quantity: 1000,
+    line: "L1",
+    mold_id: "MOLD-TUBE"
+  });
+
+  assert.equal(res.statusCode, 409);
+  assert.equal(res.body.error, "Insufficient stock for material MAT-STEEL");
+  assert.equal(rollbackCount, 1);
+});
+
+test("Work Order creation fails and rolls back when mold is in use", async () => {
+  let rollbackCount = 0;
+  const pool = createMockPool({ onRollback: () => rollbackCount++ });
+  // force mold to in use
+  await pool.query("UPDATE molds SET status = 'In_Use' WHERE mold_id = 'MOLD-TUBE'");
+
+  const app = createApp({ pool });
+
+  const res = await request(app, "POST", "/api/work-orders", {
+    work_order_id: "WO-NEW",
+    product_id: "PRD-STEEL-TUBE",
+    quantity: 10,
+    line: "L1",
+    mold_id: "MOLD-TUBE"
+  });
+
+  assert.equal(res.statusCode, 409);
+  assert.equal(res.body.error, "Mold is currently in use");
+  assert.equal(rollbackCount, 1);
+});
+
+test("Work Order creation rolls back if inventory transaction fails", async () => {
+  let rollbackCount = 0;
+  const app = createApp({ pool: createMockPool({ failInventoryTransaction: true, onRollback: () => rollbackCount++ }) });
+
+  const res = await request(app, "POST", "/api/work-orders", {
+    work_order_id: "WO-NEW",
+    product_id: "PRD-STEEL-TUBE",
+    quantity: 10,
+    line: "L1",
+    mold_id: "MOLD-TUBE"
+  });
+
+  assert.equal(res.statusCode, 500);
+  assert.equal(rollbackCount, 1);
+});
+
+test("Work Order creation rolls back if system log fails", async () => {
+  let rollbackCount = 0;
+  const app = createApp({ pool: createMockPool({ failSystemLog: true, onRollback: () => rollbackCount++ }) });
+
+  const res = await request(app, "POST", "/api/work-orders", {
+    work_order_id: "WO-NEW",
+    product_id: "PRD-STEEL-TUBE",
+    quantity: 10,
+    line: "L1",
+    mold_id: "MOLD-TUBE"
+  });
+
+  assert.equal(res.statusCode, 500);
+  assert.equal(rollbackCount, 1);
 });
