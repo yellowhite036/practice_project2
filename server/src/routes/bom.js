@@ -5,6 +5,16 @@ const asyncRoute = (handler) => (req, res, next) => {
   Promise.resolve(handler(req, res, next)).catch(next);
 };
 
+const BOM_COLUMNS = `
+  bom_id,
+  product_id,
+  material_id,
+  amount_per_unit,
+  version,
+  created_at,
+  updated_at
+`;
+
 function validateBom(body) {
   if (!body.product_id) return "product_id is required";
   if (!body.material_id) return "material_id is required";
@@ -24,12 +34,15 @@ module.exports = function createBomRouter(pool) {
   const router = Router();
 
   router.get("/", asyncRoute(async (req, res) => {
-    const { rows } = await pool.query("SELECT * FROM bom_table ORDER BY bom_id");
+    const { rows } = await pool.query(`SELECT ${BOM_COLUMNS} FROM bom_table ORDER BY bom_id`);
     res.json(rows);
   }));
 
   router.get("/product/:productId", asyncRoute(async (req, res) => {
-    const { rows } = await pool.query("SELECT * FROM bom_table WHERE product_id = $1 ORDER BY bom_id", [req.params.productId]);
+    const { rows } = await pool.query(
+      `SELECT ${BOM_COLUMNS} FROM bom_table WHERE product_id = $1 ORDER BY bom_id`,
+      [req.params.productId]
+    );
     res.json(rows);
   }));
 
@@ -45,12 +58,12 @@ module.exports = function createBomRouter(pool) {
       "SELECT bom_id FROM bom_table WHERE product_id = $1 AND material_id = $2",
       [product_id, material_id]
     );
-    if (duplicate.rows.length > 0) throw createHttpError(400, "product_id and material_id already exist in BOM");
+    if (duplicate.rows.length > 0) throw createHttpError(409, "product_id and material_id already exist in BOM");
 
     const { rows } = await pool.query(
       `INSERT INTO bom_table (bom_id, product_id, material_id, amount_per_unit)
        VALUES ($1, $2, $3, $4)
-       RETURNING *`,
+       RETURNING ${BOM_COLUMNS}`,
       [bom_id, product_id, material_id, amount_per_unit]
     );
     res.status(201).json(rows[0]);
@@ -67,13 +80,13 @@ module.exports = function createBomRouter(pool) {
       "SELECT bom_id FROM bom_table WHERE product_id = $1 AND material_id = $2 AND bom_id <> $3",
       [product_id, material_id, req.params.id]
     );
-    if (duplicate.rows.length > 0) throw createHttpError(400, "product_id and material_id already exist in BOM");
+    if (duplicate.rows.length > 0) throw createHttpError(409, "product_id and material_id already exist in BOM");
 
     const { rows } = await pool.query(
       `UPDATE bom_table
        SET product_id = $1, material_id = $2, amount_per_unit = $3, updated_at = now()
        WHERE bom_id = $4
-       RETURNING *`,
+       RETURNING ${BOM_COLUMNS}`,
       [product_id, material_id, amount_per_unit, req.params.id]
     );
     if (rows.length === 0) throw createHttpError(404, "BOM row not found");
@@ -81,9 +94,12 @@ module.exports = function createBomRouter(pool) {
   }));
 
   router.delete("/:id", asyncRoute(async (req, res) => {
-    const { rows } = await pool.query("DELETE FROM bom_table WHERE bom_id = $1 RETURNING *", [req.params.id]);
+    const { rows } = await pool.query(
+      "DELETE FROM bom_table WHERE bom_id = $1 RETURNING bom_id",
+      [req.params.id]
+    );
     if (rows.length === 0) throw createHttpError(404, "BOM row not found");
-    res.status(204).end();
+    res.json({ deleted: true, id: rows[0].bom_id });
   }));
 
   return router;

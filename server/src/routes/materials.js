@@ -5,6 +5,19 @@ const asyncRoute = (handler) => (req, res, next) => {
   Promise.resolve(handler(req, res, next)).catch(next);
 };
 
+const MATERIAL_COLUMNS = `
+  material_id,
+  name,
+  unit,
+  stock,
+  capacity,
+  safety_stock,
+  location,
+  version,
+  created_at,
+  updated_at
+`;
+
 function validateMaterial(body) {
   if (!body.name) return "name is required";
   if (!body.unit) return "unit is required";
@@ -18,12 +31,15 @@ module.exports = function createMaterialsRouter(pool) {
   const router = Router();
 
   router.get("/", asyncRoute(async (req, res) => {
-    const { rows } = await pool.query("SELECT * FROM materials ORDER BY material_id");
+    const { rows } = await pool.query(`SELECT ${MATERIAL_COLUMNS} FROM materials ORDER BY material_id`);
     res.json(rows);
   }));
 
   router.get("/:id", asyncRoute(async (req, res) => {
-    const { rows } = await pool.query("SELECT * FROM materials WHERE material_id = $1", [req.params.id]);
+    const { rows } = await pool.query(
+      `SELECT ${MATERIAL_COLUMNS} FROM materials WHERE material_id = $1`,
+      [req.params.id]
+    );
     if (rows.length === 0) throw createHttpError(404, "Material not found");
     res.json(rows[0]);
   }));
@@ -38,7 +54,7 @@ module.exports = function createMaterialsRouter(pool) {
     const { rows } = await pool.query(
       `INSERT INTO materials (material_id, name, unit, stock, capacity, safety_stock, location)
        VALUES ($1, $2, $3, $4, $5, $6, $7)
-       RETURNING *`,
+       RETURNING ${MATERIAL_COLUMNS}`,
       [material_id, name, unit, stock, capacity, safety_stock, location]
     );
     res.status(201).json(rows[0]);
@@ -53,7 +69,7 @@ module.exports = function createMaterialsRouter(pool) {
       `UPDATE materials
        SET name = $1, unit = $2, stock = $3, capacity = $4, safety_stock = $5, location = $6, updated_at = now()
        WHERE material_id = $7
-       RETURNING *`,
+       RETURNING ${MATERIAL_COLUMNS}`,
       [name, unit, stock, capacity, safety_stock, location, req.params.id]
     );
     if (rows.length === 0) throw createHttpError(404, "Material not found");
@@ -61,9 +77,12 @@ module.exports = function createMaterialsRouter(pool) {
   }));
 
   router.delete("/:id", asyncRoute(async (req, res) => {
-    const { rows } = await pool.query("DELETE FROM materials WHERE material_id = $1 RETURNING *", [req.params.id]);
+    const { rows } = await pool.query(
+      "DELETE FROM materials WHERE material_id = $1 RETURNING material_id",
+      [req.params.id]
+    );
     if (rows.length === 0) throw createHttpError(404, "Material not found");
-    res.status(204).end();
+    res.json({ deleted: true, id: rows[0].material_id });
   }));
 
   return router;
