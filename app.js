@@ -268,16 +268,27 @@ async function fetchBackendState() {
   };
 }
 
+function setLoading(isLoading) {
+  state.loading = isLoading;
+  const el = $("#globalLoading");
+  if (el) el.style.display = isLoading ? "block" : "none";
+}
+
 async function refreshStateFromApi() {
   const currentRole = state.role;
   const currentView = state.activeView;
-  const data = await fetchBackendState();
-  state = {
-    ...createEmptyState(),
-    ...data,
-    role: currentRole,
-    activeView: currentView
-  };
+  setLoading(true);
+  try {
+    const data = await fetchBackendState();
+    state = {
+      ...createEmptyState(),
+      ...data,
+      role: currentRole,
+      activeView: currentView
+    };
+  } finally {
+    setLoading(false);
+  }
 }
 
 // ============================================================
@@ -955,6 +966,7 @@ async function initializeApp() {
   addLog("INFO", "連線到後端 API…");
   render();
 
+  setLoading(true);
   try {
     await apiRequest("GET", "/health");
     await refreshStateFromApi();
@@ -963,6 +975,8 @@ async function initializeApp() {
     state.error = error.message;
     addLog("ERR", `API 連線失敗：${error.message}`);
     render();
+  } finally {
+    setLoading(false);
   }
 }
 

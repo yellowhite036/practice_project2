@@ -9,7 +9,21 @@
 </head>
 
 <body>
-  <div class="app-shell">
+  <div id="loginOverlay" class="login-overlay" style="display: none; position: fixed; top: 0; left: 0; right: 0; bottom: 0; background: var(--bg-color); z-index: 1000; justify-content: center; align-items: center;">
+    <div class="panel" style="width: 100%; max-width: 400px; padding: 24px;">
+      <h2 style="margin-top: 0; margin-bottom: 24px; text-align: center;">WMS+MES 系統登入</h2>
+      <form id="loginForm" style="display: flex; flex-direction: column; gap: 16px;">
+        <label>
+          使用者 ID
+          <input type="text" id="loginUserId" name="userId" placeholder="例如: admin, manager, operator" required style="width: 100%; box-sizing: border-box; margin-top: 8px;" />
+        </label>
+        <div id="loginError" class="status-pill bad" style="display: none; align-self: flex-start;"></div>
+        <button type="submit" id="loginBtn" class="primary-action" style="margin-top: 8px;">登入</button>
+      </form>
+    </div>
+  </div>
+
+  <div id="mainContent" class="app-shell">
     <aside class="sidebar" aria-label="主選單">
       <div class="brand">
         <div class="brand-mark">WM</div>
@@ -21,11 +35,12 @@
 
       <section class="role-panel" aria-label="使用者權限">
         <span class="section-label">登入角色</span>
-        <div class="segmented" role="group" aria-label="切換角色">
+        <div class="segmented" role="group" aria-label="切換角色" style="display: none;">
           <button class="role-button active" data-role="operator" type="button">作業員</button>
           <button class="role-button" data-role="admin" type="button">管理員</button>
         </div>
         <p id="roleNote" class="role-note">可建立工單、執行自動領料與查看現場狀態。</p>
+        <button id="logoutButton" class="secondary-action" style="margin-top: 12px; width: 100%;">登出</button>
       </section>
 
       <nav class="nav-tabs" aria-label="功能頁籤">
@@ -43,9 +58,14 @@
           <p class="eyebrow">智慧工廠模擬場景</p>
           <h2 id="viewTitle">工單派發</h2>
         </div>
-        <div class="clock-card">
-          <span>廠內批次</span>
-          <strong id="batchCode">LOT-240804-A</strong>
+        <div style="display: flex; gap: 16px; align-items: center;">
+          <div id="globalLoading" style="display: none; color: var(--primary); font-weight: bold;">
+            ↻ 載入中...
+          </div>
+          <div class="clock-card">
+            <span>廠內批次</span>
+            <strong id="batchCode">LOT-240804-A</strong>
+          </div>
         </div>
       </header>
 
