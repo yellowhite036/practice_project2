@@ -1,0 +1,52 @@
+name: Tests
+
+on:
+  push:
+    branches: [ master ]
+  pull_request:
+    branches: [ master ]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    
+    services:
+      postgres:
+        image: postgres:15
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: practice_project2_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+    steps:
+    - uses: actions/checkout@v3
+
+    - name: Use Node.js
+      uses: actions/setup-node@v3
+      with:
+        node-version: '20.x'
+
+    - name: Install dependencies
+      working-directory: ./server
+      run: npm install
+
+    - name: Run unit tests
+      working-directory: ./server
+      run: npm test
+      
+    - name: Run integration tests
+      working-directory: ./server
+      run: npm run test:integration
+      env:
+        TEST_DB_HOST: localhost
+        TEST_DB_PORT: 5432
+        TEST_DB_USER: postgres
+        TEST_DB_PASSWORD: postgres
+        TEST_DB_NAME: practice_project2_test
