@@ -10,28 +10,18 @@ jobs:
   test:
     runs-on: ubuntu-latest
     
-    services:
-      postgres:
-        image: postgres:15
-        env:
-          POSTGRES_USER: postgres
-          POSTGRES_PASSWORD: postgres
-          POSTGRES_DB: practice_project2_test
-        ports:
-          - 5432:5432
-        options: >-
-          --health-cmd pg_isready
-          --health-interval 10s
-          --health-timeout 5s
-          --health-retries 5
-
     steps:
     - uses: actions/checkout@v3
 
-    - name: Use Node.js
-      uses: actions/setup-node@v3
-      with:
-        node-version: '20.x'
+    - name: Start Docker Compose
+      run: docker compose up -d postgres backend
+      
+    - name: Wait for postgres to be ready
+      run: |
+        until docker compose exec -T postgres pg_isready -U postgres; do
+          echo "Waiting for postgres..."
+          sleep 2
+        done
 
     - name: Install dependencies
       working-directory: ./server
@@ -49,4 +39,8 @@ jobs:
         TEST_DB_PORT: 5432
         TEST_DB_USER: postgres
         TEST_DB_PASSWORD: postgres
-        TEST_DB_NAME: practice_project2_test
+        TEST_DB_NAME: practice_project2
+
+    - name: Stop Docker Compose
+      if: always()
+      run: docker compose down -v
