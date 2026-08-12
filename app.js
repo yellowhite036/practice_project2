@@ -1,162 +1,47 @@
 const API_BASE_URL = "/api";
 
-const initialMaterials = [
-  { id: "MAT-STEEL", name: "鋼鐵", unit: "kg", stock: 1500, capacity: 2000, safety: 300, location: "A-01-01" },
-  { id: "MAT-PLASTIC", name: "塑膠", unit: "kg", stock: 1200, capacity: 2000, safety: 400, location: "A-01-02" },
-  { id: "MAT-WOOD", name: "木材", unit: "kg", stock: 800, capacity: 1500, safety: 200, location: "B-01-01" },
-  { id: "MAT-GLASS", name: "玻璃", unit: "kg", stock: 600, capacity: 1000, safety: 150, location: "B-01-02" }
-];
+// ============================================================
+// JWT TOKEN MANAGEMENT
+// ============================================================
 
-const initialMolds = [
-  { id: "MOLD-TUBE", name: "長管塑型模具", status: "Idle", line: "-", eta: "-", productId: "" },
-  { id: "MOLD-BOTTLE", name: "水壺模具", status: "Idle", line: "-", eta: "-", productId: "" },
-  { id: "MOLD-BOX", name: "方塊模具", status: "Idle", line: "-", eta: "-", productId: "" },
-  { id: "MOLD-PLATE", name: "平板模具", status: "Idle", line: "-", eta: "-", productId: "" }
-];
-
-const productNames = {
-  "MAT-STEEL_MOLD-TUBE": "鋼管",
-  "MAT-PLASTIC_MOLD-TUBE": "塑膠管",
-  "MAT-STEEL_MOLD-BOTTLE": "鐵水壺",
-  "MAT-PLASTIC_MOLD-BOTTLE": "水壺",
-};
-
-const initialProducts = [];
-initialMaterials.forEach(mat => {
-  initialMolds.forEach(mold => {
-    const key = `${mat.id}_${mold.id}`;
-    let pName = productNames[key];
-    if (!pName) {
-      const shortMat = mat.name.replace("鋼鐵", "鐵").replace("木材", "木");
-      const shortMold = mold.name.replace("模具", "").replace("塑型", "");
-      pName = `${shortMat}${shortMold}`;
-    }
-    const productId = `PRD-${mat.id.split('-')[1]}-${mold.id.split('-')[1]}`;
-    if (!mold.productId) mold.productId = productId;
-
-    initialProducts.push({
-      id: productId,
-      name: pName,
-      cycleMinutes: 20 + ((mat.id.length + mold.id.length) % 4) * 10,
-      moldId: mold.id,
-      stock: 0
-    });
-  });
-});
-
-const initialBomTable = [];
-let _bomSeq = 1;
-initialProducts.forEach(product => {
-  const matId = product.id.includes("STEEL") ? "MAT-STEEL" : product.id.includes("PLASTIC") ? "MAT-PLASTIC" : product.id.includes("WOOD") ? "MAT-WOOD" : "MAT-GLASS";
-  initialBomTable.push({
-    bomId: `BOM-${String(_bomSeq++).padStart(4, "0")}`,
-    productId: product.id,
-    materialId: matId,
-    amountPerUnit: matId === "MAT-STEEL" ? 2.5 : 1.5
-  });
-});
-
-const seedState = {
-  role: "operator",
-  activeView: "workorders",
-  materials: initialMaterials,
-  molds: initialMolds,
-  products: initialProducts,
-  bomTable: initialBomTable,
-  workOrders: [
-    { id: "WO-260804-001", productId: "PRD-STEEL-TUBE", quantity: 100, line: "L1", moldId: "MOLD-TUBE", status: "已完工", creator: "管理員" }
-  ],
-  lastAutomation: null,
-  logs: [
-    { type: "INFO", message: "系統初始化：載入材料、模具與產品主資料。", time: "08:00:00" }
-  ]
-};
-
-// ─────────────────────────────────────────────
-// DATABASE CONSTRAINT LAYER
-// Mirrors SQL-level rules enforced at the data layer:
-//   CHECK (stock >= 0)          — material quantity
-//   ENUM ('Idle','In_Use')      — mold status
-// ─────────────────────────────────────────────
-
-const MOLD_STATUS_ENUM = Object.freeze(["Idle", "In_Use"]);
-
-/**
- * DB CHECK: material stock cannot go below 0.
- * Throws a constraint error string if violated.
- * @param {number} newStock - proposed new stock value
- * @param {string} materialName - for error message
- */
-function dbCheckStock(newStock, materialName) {
-  if (newStock < 0) {
-    throw new Error(`[DB CONSTRAINT] CHECK (stock >= 0) 違反：${materialName} 扣減後庫存為 ${newStock.toFixed(2)}，不可為負數。`);
-  }
+function getToken() {
+  return sessionStorage.getItem("jwt_token");
 }
 
-/**
- * DB CHECK: mold status must be one of the defined ENUM values.
- * Throws a constraint error string if violated.
- * @param {string} newStatus - proposed new status
- */
-function dbCheckMoldStatus(newStatus) {
-  if (!MOLD_STATUS_ENUM.includes(newStatus)) {
-    throw new Error(`[DB CONSTRAINT] ENUM ('${MOLD_STATUS_ENUM.join("','")}'}) 違反：模具狀態「${newStatus}」不在允許的 Enum 值中。`);
-  }
+function setToken(token) {
+  sessionStorage.setItem("jwt_token", token);
 }
 
-/**
- * Safe wrapper: set material stock with DB constraint check.
- * Returns { ok: true } or { ok: false, error: string }
- */
-function setMaterialStock(material, newStock) {
+function clearToken() {
+  sessionStorage.removeItem("jwt_token");
+  sessionStorage.removeItem("jwt_user");
+}
+
+function getStoredUser() {
   try {
-    dbCheckStock(newStock, material.name);
-    material.stock = Number(newStock.toFixed(2));
-    return { ok: true };
-  } catch (e) {
-    return { ok: false, error: e.message };
+    const raw = sessionStorage.getItem("jwt_user");
+    return raw ? JSON.parse(raw) : null;
+  } catch {
+    return null;
   }
 }
 
-/**
- * Safe wrapper: set mold status with DB constraint check.
- * Returns { ok: true } or { ok: false, error: string }
- */
-function setMoldStatus(mold, newStatus) {
+function setStoredUser(user) {
+  sessionStorage.setItem("jwt_user", JSON.stringify(user));
+}
+
+function decodeJwtRole(token) {
   try {
-    dbCheckMoldStatus(newStatus);
-    mold.status = newStatus;
-    return { ok: true };
-  } catch (e) {
-    return { ok: false, error: e.message };
+    const payload = JSON.parse(atob(token.split(".")[1]));
+    return payload.role || "operator";
+  } catch {
+    return "operator";
   }
 }
 
-let state = createEmptyState();
-
-const viewTitles = {
-  workorders: "工單派發",
-  materials: "材料庫存",
-  molds: "模具排程",
-  products: "產品 BOM",
-  logs: "系統紀錄"
-};
-
-const roleNotes = {
-  operator: "可建立工單、執行自動領料與查看現場狀態。",
-  admin: "可補料、釋放模具、重置模擬資料並追蹤異常。"
-};
-
-const automationTemplate = [
-  ["讀取 BOM", "依產品主檔展開單位用量並乘上工單數量。"],
-  ["檢查 WMS 庫存", "比對可用庫存、安全量與領料需求。"],
-  ["查詢模具狀態", "確認產品綁定模具可用，並分配到指定產線。"],
-  ["扣減材料", "寫入庫存異動並保留扣帳紀錄。"],
-  ["建立 MES 工單", "產生工單號碼，更新現場看板與排程。"]
-];
-
-const $ = (selector) => document.querySelector(selector);
-const $$ = (selector) => [...document.querySelectorAll(selector)];
+// ============================================================
+// STATE
+// ============================================================
 
 function createEmptyState() {
   return {
@@ -168,15 +53,57 @@ function createEmptyState() {
     bomTable: [],
     workOrders: [],
     lastAutomation: null,
-    logs: []
+    logs: [],
+    loading: false,
+    error: null
   };
 }
 
+let state = createEmptyState();
+
+// ============================================================
+// CONSTANTS / UI HELPERS
+// ============================================================
+
+const viewTitles = {
+  workorders: "工單派發",
+  materials: "物料庫存",
+  molds: "模具狀態",
+  products: "產品 BOM",
+  logs: "系統紀錄"
+};
+
+const roleNotes = {
+  operator: "可建立工單、執行自動化、查詢現場狀態",
+  manager: "可建立工單、修改物料模具產品 BOM",
+  admin: "完整管理：修改模具、配置模具並追蹤異常事件"
+};
+
+const automationTemplate = [
+  ["讀取 BOM", "依產品主檔查詢單位用料並乘以工單數量"],
+  ["檢查 WMS 庫存", "比對可用庫存是否滿足需求量"],
+  ["查詢模具狀態", "確認所綁定模具可用，並鎖定指定產線位"],
+  ["扣庫入帳", "寫入庫存事務並原子扣帳（PostgreSQL Transaction）"],
+  ["建立 MES 工單", "生成工單編號，更新現場看板狀態"]
+];
+
+const $ = (selector) => document.querySelector(selector);
+const $$ = (selector) => [...document.querySelectorAll(selector)];
+
+// ============================================================
+// API REQUEST (JWT-AUTHENTICATED)
+// ============================================================
+
 async function apiRequest(method, path, body = null) {
+  const token = getToken();
   const options = {
     method,
     headers: { Accept: "application/json" }
   };
+
+  if (token) {
+    options.headers["Authorization"] = `Bearer ${token}`;
+  }
 
   if (body !== null) {
     options.headers["Content-Type"] = "application/json";
@@ -187,7 +114,15 @@ async function apiRequest(method, path, body = null) {
   try {
     response = await fetch(`${API_BASE_URL}${path}`, options);
   } catch {
-    throw new Error("無法連線至後端服務，請確認 Express API 是否已啟動。");
+    throw new Error("無法連線到後端，請確認 Express API 是否已啟動");
+  }
+
+  if (response.status === 401) {
+    if (path !== "/auth/login") {
+      clearToken();
+      renderLoginScreen();
+      throw new Error("認證失敗，請重新登入");
+    }
   }
 
   const contentType = response.headers.get("content-type") || "";
@@ -195,16 +130,35 @@ async function apiRequest(method, path, body = null) {
 
   if (!response.ok) {
     const fallback = {
-      400: "資料格式不正確，請檢查輸入內容。",
-      404: "找不到指定資料。",
-      500: "後端服務發生錯誤，請稍後再試。",
-      503: "後端或資料庫目前無法連線。"
-    }[response.status] || "API 請求失敗。";
+      400: "資料格式不正確，請檢查輸入內容",
+      401: "認證失敗，請重新登入",
+      403: "您的角色無此操作權限",
+      404: "找不到指定資源",
+      409: "資料衝突（版本衝突或約束違反），請重新整理",
+      500: "後端伺服器內部錯誤，請稍後重試",
+      503: "後端連接資料庫失敗"
+    }[response.status] || "API 請求失敗";
     throw new Error(data && data.error ? data.error : fallback);
   }
 
   return data;
 }
+
+// ============================================================
+// LOGIN
+// ============================================================
+
+async function doLogin(userId) {
+  const data = await apiRequest("POST", "/auth/login", { user_id: userId });
+  setToken(data.token);
+  setStoredUser(data.user);
+  state.role = data.user.role;
+  return data.user;
+}
+
+// ============================================================
+// DATA MAPPERS
+// ============================================================
 
 function mapMaterial(row) {
   return {
@@ -214,7 +168,8 @@ function mapMaterial(row) {
     stock: Number(row.stock ?? 0),
     capacity: row.capacity === null || row.capacity === undefined ? 0 : Number(row.capacity),
     safety: Number(row.safety_stock ?? 0),
-    location: row.location || ""
+    location: row.location || "",
+    version: row.version || 1
   };
 }
 
@@ -224,9 +179,10 @@ function toApiMaterial(material) {
     name: material.name,
     unit: material.unit,
     stock: material.stock,
-    capacity: material.capacity,
+    capacity: material.capacity || null,
     safety_stock: material.safety,
-    location: material.location
+    location: material.location || null,
+    version: material.version
   };
 }
 
@@ -236,7 +192,8 @@ function mapProduct(row) {
     name: row.name,
     cycleMinutes: Number(row.cycle_minutes),
     moldId: row.mold_id,
-    stock: Number(row.stock ?? 0)
+    stock: Number(row.stock ?? 0),
+    version: row.version || 1
   };
 }
 
@@ -247,7 +204,8 @@ function mapMold(row) {
     status: row.status,
     line: row.line || "-",
     eta: row.eta || "-",
-    productId: row.product_id || ""
+    productId: row.product_id || "",
+    version: row.version || 1
   };
 }
 
@@ -256,7 +214,8 @@ function mapBom(row) {
     bomId: row.bom_id,
     productId: row.product_id,
     materialId: row.material_id,
-    amountPerUnit: Number(row.amount_per_unit)
+    amountPerUnit: Number(row.amount_per_unit),
+    version: row.version || 1
   };
 }
 
@@ -280,16 +239,25 @@ function mapLog(row) {
   };
 }
 
+// ============================================================
+// DATA FETCHING
+// ============================================================
+
 async function fetchBackendState() {
-  const [materials, products, molds, bomTable, workOrders, logs] = await Promise.all([
+  const canReadLogs = ["admin", "manager"].includes(state.role);
+  const requests = [
     apiRequest("GET", "/materials"),
     apiRequest("GET", "/products"),
     apiRequest("GET", "/molds"),
     apiRequest("GET", "/bom"),
-    apiRequest("GET", "/work-orders"),
-    apiRequest("GET", "/logs")
-  ]);
-
+    apiRequest("GET", "/work-orders")
+  ];
+  if (canReadLogs) {
+    requests.push(apiRequest("GET", "/logs"));
+  }
+  const results = await Promise.all(requests);
+  const [materials, products, molds, bomTable, workOrders] = results;
+  const logs = canReadLogs ? results[5] : [];
   return {
     materials: materials.map(mapMaterial),
     products: products.map(mapProduct),
@@ -312,23 +280,12 @@ async function refreshStateFromApi() {
   };
 }
 
-async function initializeApp() {
-  addLog("INFO", "正在連線至後端服務...");
-  render();
-
-  try {
-    await apiRequest("GET", "/health");
-    await refreshStateFromApi();
-    render();
-  } catch (error) {
-    state = createEmptyState();
-    addLog("ERR", error.message);
-    render();
-  }
-}
+// ============================================================
+// UTILITIES
+// ============================================================
 
 function formatAmount(value) {
-  return Number.isInteger(value) ? value.toString() : value.toFixed(2);
+  return Number.isInteger(Number(value)) ? String(Number(value)) : Number(value).toFixed(2);
 }
 
 function nowTime() {
@@ -377,6 +334,36 @@ function calculateRequirements(productId, quantity) {
   }).filter(Boolean);
 }
 
+function translateMoldStatus(status) {
+  return { Idle: "閒置", In_Use: "使用中" }[status] || status;
+}
+
+function canWrite() {
+  return ["admin", "manager"].includes(state.role);
+}
+
+// ============================================================
+// RENDER - LOGIN SCREEN
+// ============================================================
+
+function renderLoginScreen() {
+  const loginOverlay = document.getElementById("loginOverlay");
+  const mainContent = document.getElementById("mainContent");
+  if (loginOverlay) loginOverlay.style.display = "flex";
+  if (mainContent) mainContent.style.display = "none";
+}
+
+function renderMainScreen() {
+  const loginOverlay = document.getElementById("loginOverlay");
+  const mainContent = document.getElementById("mainContent");
+  if (loginOverlay) loginOverlay.style.display = "none";
+  if (mainContent) mainContent.style.display = "";
+}
+
+// ============================================================
+// RENDER - MAIN APP
+// ============================================================
+
 function render() {
   renderRole();
   renderNavigation();
@@ -394,31 +381,32 @@ function render() {
 }
 
 function renderRole() {
-  $$(".role-button").forEach((button) => {
-    button.classList.toggle("active", button.dataset.role === state.role);
-  });
-
-  $("#roleNote").textContent = roleNotes[state.role];
-  $("#permissionBadge").textContent = state.role === "admin" ? "管理員模式" : "作業員模式";
+  const roleNoteEl = $("#roleNote");
+  if (roleNoteEl) roleNoteEl.textContent = roleNotes[state.role] || "";
+  const permBadge = $("#permissionBadge");
+  if (permBadge) {
+    permBadge.textContent = state.role === "admin" ? "管理員模式" : state.role === "manager" ? "主管模式" : "作業員模式";
+  }
 
   $$(".nav-button.admin-only").forEach((button) => {
     button.classList.toggle("hidden", state.role !== "admin");
   });
 
   $$(".admin-only:not(.nav-button)").forEach((button) => {
-    const isAdmin = state.role === "admin";
-    button.classList.toggle("hidden", !isAdmin);
-    button.disabled = !isAdmin;
-    button.title = isAdmin ? "" : "此操作限管理員";
+    const hasAccess = canWrite();
+    button.classList.toggle("hidden", !hasAccess);
+    button.disabled = !hasAccess;
+    button.title = hasAccess ? "" : "此操作需主管或管理員";
   });
 
-  if (state.role !== "admin" && ["molds", "products", "logs"].includes(state.activeView)) {
+  if (!canWrite() && state.activeView === "logs" && state.role === "operator") {
     state.activeView = "workorders";
   }
 }
 
 function renderNavigation() {
-  $("#viewTitle").textContent = viewTitles[state.activeView];
+  const viewTitle = $("#viewTitle");
+  if (viewTitle) viewTitle.textContent = viewTitles[state.activeView];
   $$(".nav-button").forEach((button) => {
     button.classList.toggle("active", button.dataset.view === state.activeView);
   });
@@ -428,21 +416,25 @@ function renderNavigation() {
 }
 
 function renderMetrics() {
-  const healthyMaterials = state.materials.filter((material) => material.stock > material.safety).length;
-  const availableMolds = state.molds.filter((mold) => mold.status === "available").length;
+  const healthyMaterials = state.materials.filter((m) => m.stock > m.safety).length;
+  const availableMolds = state.molds.filter((mold) => mold.status === "Idle").length;
   const exceptions = state.logs.filter((log) => log.type === "WARN" || log.type === "ERR").length;
 
-  $("#materialHealth").textContent = `${healthyMaterials}/${state.materials.length}`;
-  $("#moldHealth").textContent = `${availableMolds}/${state.molds.length}`;
-  $("#workOrderCount").textContent = state.workOrders.length;
-  $("#exceptionCount").textContent = exceptions;
+  const mhEl = $("#materialHealth");
+  if (mhEl) mhEl.textContent = `${healthyMaterials}/${state.materials.length}`;
+  const moldEl = $("#moldHealth");
+  if (moldEl) moldEl.textContent = `${availableMolds}/${state.molds.length}`;
+  const woEl = $("#workOrderCount");
+  if (woEl) woEl.textContent = state.workOrders.length;
+  const excEl = $("#exceptionCount");
+  if (excEl) excEl.textContent = exceptions;
 }
 
 function renderMaterialOptions() {
   const select = $("#materialSelect");
   if (!select) return;
   if (state.materials.length === 0) {
-    select.innerHTML = `<option value="">無材料資料</option>`;
+    select.innerHTML = `<option value="">載入中…</option>`;
     return;
   }
   const currentValue = select.value || state.materials[0].id;
@@ -481,7 +473,7 @@ function renderCombinedProduct() {
   if (!el) return;
   const product = getDerivedProduct();
   if (!product) {
-    el.innerHTML = `<div class="product-result-none">⚠️ 此組合尚未定義產品</div>`;
+    el.innerHTML = `<div class="product-result-none">尚未定義此組合產品</div>`;
     return;
   }
   const mold = getMold(product.moldId);
@@ -496,8 +488,9 @@ function renderCombinedProduct() {
 
 function renderPreview() {
   const product = getDerivedProduct();
+  const previewEl = $("#calculationPreview");
   if (!product) {
-    $("#calculationPreview").innerHTML = `<div>⚠️ 請選擇有效的材料與模具組合</div>`;
+    if (previewEl) previewEl.innerHTML = `<div>請選擇物料、數量與模具</div>`;
     return;
   }
   const quantity = Number($("#quantityInput") ? $("#quantityInput").value || 0 : 0);
@@ -505,36 +498,33 @@ function renderPreview() {
   const mold = getMold(product.moldId);
   const rows = requirements
     .map((item) => {
-      const warning = item.afterStock < 0 ? "bad" : item.afterStock < getMaterial(item.materialId).safety ? "warn" : "ok";
-      return `<div><strong>${item.name}</strong> 需求 ${formatAmount(item.required)} ${item.unit} <span class="status-pill ${warning}">餘量 ${formatAmount(item.afterStock)}</span></div>`;
+      const mat = getMaterial(item.materialId);
+      const warning = item.afterStock < 0 ? "bad" : item.afterStock < (mat ? mat.safety : 0) ? "warn" : "ok";
+      return `<div><strong>${item.name}</strong> 需${formatAmount(item.required)} ${item.unit} <span class="status-pill ${warning}">餘量 ${formatAmount(item.afterStock)}</span></div>`;
     })
     .join("");
 
-  $("#calculationPreview").innerHTML = `
+  if (previewEl) previewEl.innerHTML = `
     <div><strong>綁定模具：</strong>${mold ? mold.name : '-'} <span class="status-pill ${mold && mold.status === 'Idle' ? 'ok' : 'warn'}">${mold ? translateMoldStatus(mold.status) : '-'}</span></div>
     ${rows}
   `;
 
-  // 根據模具狀態控制按鈕是否可點擊
   const btn = $("#submitWorkOrderBtn");
   if (btn) {
-    if (!product || (mold && mold.status !== 'Idle')) {
-      btn.disabled = true;
-      btn.style.opacity = '0.5';
-      btn.style.cursor = 'not-allowed';
-    } else {
-      btn.disabled = false;
-      btn.style.opacity = '1';
-      btn.style.cursor = 'pointer';
-    }
+    const moldBusy = mold && mold.status !== "Idle";
+    btn.disabled = !product || moldBusy;
+    btn.style.opacity = (!product || moldBusy) ? "0.5" : "1";
+    btn.style.cursor = (!product || moldBusy) ? "not-allowed" : "pointer";
   }
 }
 
 function renderAutomationSteps(result = null) {
-  $("#automationSteps").innerHTML = automationTemplate
+  const el = $("#automationSteps");
+  if (!el) return;
+  el.innerHTML = automationTemplate
     .map(([title, detail], index) => {
-      const stateClass = !result ? "ok" : result.failedAt === index ? "bad" : result.failedAt > index || result.success ? "ok" : "warn";
-      const label = !result ? "待命" : result.failedAt === index ? "阻擋" : result.failedAt > index || result.success ? "完成" : "未執行";
+      const stateClass = !result ? "ok" : result.failedAt === index ? "bad" : result.success || result.failedAt > index ? "ok" : "warn";
+      const label = !result ? "待命" : result.failedAt === index ? "失敗" : result.success || result.failedAt > index ? "完成" : "未執行";
       return `
         <li>
           <span>
@@ -549,10 +539,17 @@ function renderAutomationSteps(result = null) {
 }
 
 function renderWorkOrders() {
-  $("#workOrderTable").innerHTML = state.workOrders
+  const tbody = $("#workOrderTable");
+  if (!tbody) return;
+  if (state.workOrders.length === 0) {
+    tbody.innerHTML = `<tr><td colspan="7" style="text-align:center;color:var(--muted)">目前無工單資料</td></tr>`;
+    return;
+  }
+  tbody.innerHTML = state.workOrders
     .map((order) => {
       const product = getProduct(order.productId);
       const mold = getMold(order.moldId);
+      const statusClass = order.status === "Pending" ? "warn" : order.status === "In_Progress" ? "ok" : order.status === "Completed" ? "ok" : "bad";
       return `
         <tr>
           <td><strong>${order.id}</strong></td>
@@ -560,7 +557,7 @@ function renderWorkOrders() {
           <td>${order.quantity}</td>
           <td>${order.line}</td>
           <td>${mold ? mold.name : order.moldId}</td>
-          <td><span class="status-pill ok">${order.status}</span></td>
+          <td><span class="status-pill ${statusClass}">${order.status}</span></td>
           <td>${order.creator}</td>
         </tr>
       `;
@@ -569,23 +566,30 @@ function renderWorkOrders() {
 }
 
 function renderMaterials() {
-  $("#materialCards").innerHTML = state.materials
+  const container = $("#materialCards");
+  if (!container) return;
+  if (state.materials.length === 0) {
+    container.innerHTML = `<div style="color:var(--muted);padding:16px">目前無物料資料</div>`;
+    return;
+  }
+  container.innerHTML = state.materials
     .map((material) => {
-      const ratio = Math.max(0, Math.min(100, (material.stock / material.capacity) * 100));
+      const ratio = material.capacity > 0 ? Math.max(0, Math.min(100, (material.stock / material.capacity) * 100)) : 0;
       const low = material.stock <= material.safety;
+      const showActions = canWrite();
       return `
         <article class="inventory-card">
           <div class="card-top">
             <div>
               <h4>${material.name}</h4>
-              <p>${material.id} · 儲位 ${material.location}</p>
+              <p>${material.id} · 位 ${material.location}</p>
             </div>
             <span class="status-pill ${low ? "bad" : "ok"}">${low ? "低於安全量" : "正常"}</span>
           </div>
           <span class="stock-number">${formatAmount(material.stock)} ${material.unit}</span>
           <div class="progress ${low ? "low" : ""}"><span style="width:${ratio}%"></span></div>
-          <p>安全量 ${formatAmount(material.safety)} ${material.unit}，容量 ${formatAmount(material.capacity)} ${material.unit}</p>
-          <div class="card-actions ${state.role === 'admin' ? '' : 'hidden'}">
+          <p>安全量${formatAmount(material.safety)} ${material.unit}，容量${formatAmount(material.capacity)} ${material.unit}</p>
+          <div class="card-actions ${showActions ? '' : 'hidden'}">
             <button class="secondary-action edit-material-btn" data-id="${material.id}" type="button">編輯</button>
             <button class="secondary-action adjust-stock-btn" data-id="${material.id}" type="button">調整庫存</button>
             <button class="danger-action delete-material-btn" data-id="${material.id}" type="button">刪除</button>
@@ -597,7 +601,13 @@ function renderMaterials() {
 }
 
 function renderMolds() {
-  $("#moldCards").innerHTML = state.molds
+  const container = $("#moldCards");
+  if (!container) return;
+  if (state.molds.length === 0) {
+    container.innerHTML = `<div style="color:var(--muted);padding:16px">目前無模具資料</div>`;
+    return;
+  }
+  container.innerHTML = state.molds
     .map((mold) => {
       const locked = mold.status !== "Idle";
       const product = getProduct(mold.productId);
@@ -610,8 +620,8 @@ function renderMolds() {
             </div>
             <span class="status-pill ${mold.status === "Idle" ? "ok" : "warn"}">${translateMoldStatus(mold.status)}</span>
           </div>
-          <p>目前位置：${mold.line}</p>
-          <p>預計釋放：${mold.eta}</p>
+          <p>產線位置：${mold.line}</p>
+          <p>預計放開：${mold.eta}</p>
         </article>
       `;
     })
@@ -621,8 +631,10 @@ function renderMolds() {
 function renderProducts() {
   const tbody = $("#bomTableBody");
   if (!tbody) return;
-
-  // Simulate SQL JOIN: bom_table JOIN products JOIN molds JOIN materials
+  if ((state.bomTable || []).length === 0) {
+    tbody.innerHTML = `<tr><td colspan="10" style="text-align:center;color:var(--muted)">目前無 BOM 資料</td></tr>`;
+    return;
+  }
   tbody.innerHTML = (state.bomTable || []).map(row => {
     const product = getProduct(row.productId);
     const mold = product ? getMold(product.moldId) : null;
@@ -647,7 +659,17 @@ function renderProducts() {
 }
 
 function renderLogs() {
-  $("#logList").innerHTML = state.logs
+  const container = $("#logList");
+  if (!container) return;
+  if (!["admin", "manager"].includes(state.role)) {
+    container.innerHTML = `<div style="color:var(--muted);padding:16px">作業員無系統日誌查看權限</div>`;
+    return;
+  }
+  if (state.logs.length === 0) {
+    container.innerHTML = `<div style="color:var(--muted);padding:16px">目前無日誌記錄</div>`;
+    return;
+  }
+  container.innerHTML = state.logs
     .map((log) => {
       const tone = log.type === "ERR" ? "bad" : log.type === "WARN" ? "warn" : "ok";
       return `
@@ -661,57 +683,109 @@ function renderLogs() {
     .join("");
 }
 
-function translateMoldStatus(status) {
-  return {
-    Idle: "閒置",
-    In_Use: "使用中"
-  }[status] || status;
-}
+// ============================================================
+// WORK ORDER SUBMISSION (API-DRIVEN)
+// ============================================================
 
-function submitWorkOrder(event) {
+async function submitWorkOrder(event) {
   event.preventDefault();
 
-  addLog("WARN", "生產交易 API 尚未完成；工單建立、扣料、產品入庫與模具更新將在後續 Transaction Issue 實作。");
-  state.lastAutomation = { failedAt: 4, success: false };
+  const product = getDerivedProduct();
+  if (!product) {
+    addLog("WARN", "請先選擇有效的物料與模具組合");
+    render();
+    return;
+  }
+
+  const quantity = Number($("#quantityInput").value || 0);
+  const line = $("#lineSelect") ? $("#lineSelect").value : "L1";
+  const mold = getMold(product.moldId);
+
+  if (!mold || mold.status !== "Idle") {
+    addLog("WARN", `模具 ${product.moldId} 目前非閒置狀態，無法建立工單`);
+    render();
+    return;
+  }
+
+  if (!quantity || quantity <= 0) {
+    addLog("WARN", "生產數量必須大於 0");
+    render();
+    return;
+  }
+
+  const now = new Date();
+  const dateStr = `${now.getFullYear().toString().slice(-2)}${String(now.getMonth() + 1).padStart(2, "0")}${String(now.getDate()).padStart(2, "0")}`;
+  const seq = String(state.workOrders.length + 1).padStart(3, "0");
+  const workOrderId = `WO-${dateStr}-${seq}`;
+
+  const storedUser = getStoredUser();
+  const payload = {
+    work_order_id: workOrderId,
+    product_id: product.id,
+    quantity,
+    line,
+    mold_id: product.moldId,
+    creator_user_id: storedUser ? storedUser.user_id : null,
+    creator_name: storedUser ? storedUser.user_id : null
+  };
+
+  state.lastAutomation = { failedAt: -1, success: false };
+  renderAutomationSteps(state.lastAutomation);
+
+  const btn = $("#submitWorkOrderBtn");
+  if (btn) { btn.disabled = true; btn.textContent = "處理中…"; }
+
+  try {
+    await apiRequest("POST", "/work-orders", payload);
+    state.lastAutomation = { failedAt: -1, success: true };
+    addLog("INFO", `工單 ${workOrderId} 已成功建立 (產品: ${product.name}, 數量: ${quantity})`);
+    await refreshStateFromApi();
+  } catch (error) {
+    state.lastAutomation = { failedAt: 4, success: false };
+    addLog("ERR", `工單建立失敗：${error.message}`);
+  }
+
+  if (btn) { btn.disabled = false; btn.textContent = "確認派工入模具位"; }
   render();
 }
 
-function estimateEta(cycleMinutes, quantity) {
-  const batches = Math.max(1, Math.ceil(quantity / 100));
-  const eta = new Date(Date.now() + batches * cycleMinutes * 60 * 1000);
-  return eta.toLocaleTimeString("zh-TW", { hour: "2-digit", minute: "2-digit", hour12: false });
-}
-
-function nextWorkOrderId() {
-  const next = state.workOrders.length + 1;
-  return `WO-260804-${String(next).padStart(3, "0")}`;
-}
-
-function restockMaterials() {
-  if (state.role !== "admin") return;
-  addLog("WARN", "一鍵補料需要正式庫存交易 API，將在後續 Issue 實作。");
-  render();
-}
-
-function releaseScheduledMolds() {
-  if (state.role !== "admin") return;
-  addLog("WARN", "模具批次釋放需要正式排程 API，將在後續 Issue 實作。");
-  render();
-}
+// ============================================================
+// ADMIN ACTIONS
+// ============================================================
 
 async function resetState() {
-  if (state.role !== "admin") return;
-  addLog("WARN", "重置正式資料需要後端管理 API；目前僅重新載入 API 資料。");
+  if (!canWrite()) return;
+  addLog("INFO", "重新從 API 載入最新資料…");
   try {
     await refreshStateFromApi();
+    addLog("INFO", "資料已從資料庫重新整理");
   } catch (error) {
     addLog("ERR", error.message);
   }
   render();
 }
 
+function restockMaterials() {
+  if (!canWrite()) return;
+  addLog("WARN", "一鍵補料功能需透過調整庫存功能操作");
+  render();
+}
+
+function releaseScheduledMolds() {
+  if (!canWrite()) return;
+  addLog("WARN", "模具排程放開需透過工單完成/拒絕 API");
+  render();
+}
+
+// ============================================================
+// MATERIAL MODAL (CRUD with optimistic lock version)
+// ============================================================
+
 function showMaterialModal(id = null) {
-  if (state.role !== "admin") return;
+  if (!canWrite()) {
+    addLog("WARN", "您的角色無物料修改權限");
+    return;
+  }
   const modal = $("#materialModal");
   const form = $("#materialForm");
   form.reset();
@@ -726,15 +800,20 @@ function showMaterialModal(id = null) {
       $("#materialLocation").value = material.location;
       $("#materialCapacity").value = material.capacity;
       $("#materialSafety").value = material.safety;
+      form.dataset.version = material.version;
     }
   } else {
     $("#materialOriginalId").value = "";
+    form.dataset.version = "";
   }
   modal.showModal();
 }
 
 function showStockModal(id) {
-  if (state.role !== "admin") return;
+  if (!canWrite()) {
+    addLog("WARN", "您的角色無庫存調整權限");
+    return;
+  }
   const material = getMaterial(id);
   if (!material) return;
   const modal = $("#stockModal");
@@ -744,20 +823,25 @@ function showStockModal(id) {
   $("#stockMaterialId").value = material.id;
   $("#stockTargetName").textContent = `${material.id} - ${material.name}`;
   $("#currentStockDisplay").value = `${formatAmount(material.stock)} ${material.unit}`;
+  form.dataset.version = material.version;
   modal.showModal();
 }
 
 function closeModals() {
-  $("#materialModal").close();
-  $("#stockModal").close();
+  const m1 = $("#materialModal");
+  const m2 = $("#stockModal");
+  if (m1) m1.close();
+  if (m2) m2.close();
 }
 
 async function saveMaterial(event) {
   event.preventDefault();
-  if (state.role !== "admin") return;
+  if (!canWrite()) return;
 
   const originalId = $("#materialOriginalId").value;
   const newId = $("#materialId").value.trim();
+  const form = $("#materialForm");
+  const storedVersion = form.dataset.version ? Number(form.dataset.version) : undefined;
 
   const newMaterial = {
     id: newId,
@@ -766,7 +850,8 @@ async function saveMaterial(event) {
     location: $("#materialLocation").value.trim(),
     capacity: Number($("#materialCapacity").value),
     safety: Number($("#materialSafety").value),
-    stock: 0
+    stock: 0,
+    version: storedVersion
   };
 
   try {
@@ -776,10 +861,10 @@ async function saveMaterial(event) {
         newMaterial.stock = existing.stock;
       }
       await apiRequest("PUT", `/materials/${encodeURIComponent(originalId)}`, toApiMaterial(newMaterial));
-      addLog("INFO", `管理員已修改物料：${newMaterial.id} (${newMaterial.name})`);
+      addLog("INFO", `已修改物料 ${newMaterial.id} (${newMaterial.name})`);
     } else {
       await apiRequest("POST", "/materials", toApiMaterial(newMaterial));
-      addLog("INFO", `管理員已新增物料：${newMaterial.id} (${newMaterial.name})`);
+      addLog("INFO", `已新增物料 ${newMaterial.id} (${newMaterial.name})`);
     }
     await refreshStateFromApi();
     closeModals();
@@ -792,7 +877,10 @@ async function saveMaterial(event) {
 }
 
 async function deleteMaterial(id) {
-  if (state.role !== "admin") return;
+  if (!canWrite()) {
+    addLog("WARN", "您的角色無物料刪除權限");
+    return;
+  }
   const material = getMaterial(id);
   if (!material) return;
 
@@ -805,29 +893,30 @@ async function deleteMaterial(id) {
 
   if (usedByProducts.length > 0) {
     const names = usedByProducts.map((p) => p.name).join("、");
-    alert(`無法刪除：${material.name} 仍被以下產品的 BOM 使用中 - ${names}`);
-    addLog("WARN", `刪除物料失敗：${material.name} 仍被 ${names} 引用。`);
+    alert(`無法刪除：${material.name} 仍被以下產品 BOM 使用 - ${names}`);
+    addLog("WARN", `刪除物料失敗：${material.name} 仍被 ${names} 引用`);
     return;
   }
 
-  if (!confirm(`確定要刪除物料「${material.name}」(${material.id}) 嗎？此操作無法復原。`)) {
+  if (!confirm(`確定要刪除物料 ${material.name}（${material.id}）？此操作無法復原。`)) {
     return;
   }
 
   try {
     await apiRequest("DELETE", `/materials/${encodeURIComponent(id)}`);
+    addLog("INFO", `已刪除物料 ${material.id} (${material.name})`);
     await refreshStateFromApi();
-    addLog("INFO", `管理員已刪除物料：${material.id} (${material.name})`);
   } catch (error) {
     alert(error.message);
     addLog("ERR", error.message);
   }
+
   render();
 }
 
 async function saveStockAdjustment(event) {
   event.preventDefault();
-  if (state.role !== "admin") return;
+  if (!canWrite()) return;
 
   const id = $("#stockMaterialId").value;
   const amount = Number($("#adjustStockAmount").value);
@@ -835,19 +924,20 @@ async function saveStockAdjustment(event) {
 
   if (!material) return;
 
-  const updated = { ...material, stock: material.stock + amount };
-  const result = setMaterialStock(updated, updated.stock);
-  if (!result.ok) {
-    addLog("ERR", result.error);
+  const newStock = material.stock + amount;
+  if (newStock < 0) {
+    addLog("ERR", `[庫存約束] 調整後庫存 ${newStock.toFixed(2)} 將為負數，已拒絕`);
     closeModals();
     render();
     return;
   }
 
+  const updated = { ...material, stock: newStock };
+
   try {
     await apiRequest("PUT", `/materials/${encodeURIComponent(id)}`, toApiMaterial(updated));
     await refreshStateFromApi();
-    addLog("INFO", `管理員已透過 API 調整 ${material.id} 庫存：${amount > 0 ? '+' : ''}${amount} ${material.unit}`);
+    addLog("INFO", `已透過 API 調整 ${material.id} 庫存 ${amount > 0 ? '+' : ''}${amount} ${material.unit}`);
     closeModals();
   } catch (error) {
     alert(error.message);
@@ -857,15 +947,30 @@ async function saveStockAdjustment(event) {
   render();
 }
 
-function bindEvents() {
-  $$(".role-button").forEach((button) => {
-    button.addEventListener("click", () => {
-      state.role = button.dataset.role;
-      addLog("INFO", `登入角色切換為${state.role === "admin" ? "管理員" : "作業員"}。`);
-      render();
-    });
-  });
+// ============================================================
+// APP INIT
+// ============================================================
 
+async function initializeApp() {
+  addLog("INFO", "連線到後端 API…");
+  render();
+
+  try {
+    await apiRequest("GET", "/health");
+    await refreshStateFromApi();
+    render();
+  } catch (error) {
+    state.error = error.message;
+    addLog("ERR", `API 連線失敗：${error.message}`);
+    render();
+  }
+}
+
+// ============================================================
+// EVENT BINDING
+// ============================================================
+
+function bindEvents() {
   $$(".nav-button").forEach((button) => {
     button.addEventListener("click", () => {
       state.activeView = button.dataset.view;
@@ -874,43 +979,109 @@ function bindEvents() {
   });
 
   const materialSelect = $("#materialSelect");
-  const moldSelect = $("#moldSelect");
   if (materialSelect) {
     materialSelect.addEventListener("change", () => {
       renderCombinedProduct();
       renderPreview();
     });
   }
+  const moldSelect = $("#moldSelect");
   if (moldSelect) {
     moldSelect.addEventListener("change", () => {
       renderCombinedProduct();
       renderPreview();
     });
   }
-  $("#quantityInput").addEventListener("input", renderPreview);
-  $("#workOrderForm").addEventListener("submit", submitWorkOrder);
-  $("#restockButton").addEventListener("click", restockMaterials);
-  $("#releaseMoldsButton").addEventListener("click", releaseScheduledMolds);
-  $("#resetButton").addEventListener("click", resetState);
 
-  $("#addMaterialButton").addEventListener("click", () => showMaterialModal());
-  $("#materialCards").addEventListener("click", (e) => {
-    if (e.target.classList.contains("edit-material-btn")) {
-      showMaterialModal(e.target.dataset.id);
-    } else if (e.target.classList.contains("adjust-stock-btn")) {
-      showStockModal(e.target.dataset.id);
-    } else if (e.target.classList.contains("delete-material-btn")) {
-      deleteMaterial(e.target.dataset.id);
-    }
-  });
-  $("#materialForm").addEventListener("submit", saveMaterial);
-  $("#stockForm").addEventListener("submit", saveStockAdjustment);
+  const qInput = $("#quantityInput");
+  if (qInput) qInput.addEventListener("input", renderPreview);
+
+  const woForm = $("#workOrderForm");
+  if (woForm) woForm.addEventListener("submit", submitWorkOrder);
+
+  const restockBtn = $("#restockButton");
+  if (restockBtn) restockBtn.addEventListener("click", restockMaterials);
+
+  const releaseMoldsBtn = $("#releaseMoldsButton");
+  if (releaseMoldsBtn) releaseMoldsBtn.addEventListener("click", releaseScheduledMolds);
+
+  const resetBtn = $("#resetButton");
+  if (resetBtn) resetBtn.addEventListener("click", resetState);
+
+  const addMaterialBtn = $("#addMaterialButton");
+  if (addMaterialBtn) addMaterialBtn.addEventListener("click", () => showMaterialModal());
+
+  const materialCards = $("#materialCards");
+  if (materialCards) {
+    materialCards.addEventListener("click", (e) => {
+      if (e.target.classList.contains("edit-material-btn")) {
+        showMaterialModal(e.target.dataset.id);
+      } else if (e.target.classList.contains("adjust-stock-btn")) {
+        showStockModal(e.target.dataset.id);
+      } else if (e.target.classList.contains("delete-material-btn")) {
+        deleteMaterial(e.target.dataset.id);
+      }
+    });
+  }
+
+  const materialForm = $("#materialForm");
+  if (materialForm) materialForm.addEventListener("submit", saveMaterial);
+
+  const stockForm = $("#stockForm");
+  if (stockForm) stockForm.addEventListener("submit", saveStockAdjustment);
+
   $$(".close-modal-btn").forEach(btn => btn.addEventListener("click", closeModals));
+
+  const logoutBtn = $("#logoutButton");
+  if (logoutBtn) {
+    logoutBtn.addEventListener("click", () => {
+      clearToken();
+      state = createEmptyState();
+      renderLoginScreen();
+    });
+  }
+
+  // Login form
+  const loginForm = document.getElementById("loginForm");
+  if (loginForm) {
+    loginForm.addEventListener("submit", async (e) => {
+      e.preventDefault();
+      const userId = document.getElementById("loginUserId").value.trim();
+      const errorEl = document.getElementById("loginError");
+      const loginBtn = document.getElementById("loginBtn");
+      if (!userId) return;
+      if (errorEl) errorEl.style.display = "none";
+      if (loginBtn) { loginBtn.disabled = true; loginBtn.textContent = "登入中..."; }
+      try {
+        await doLogin(userId);
+        renderMainScreen();
+        await initializeApp();
+      } catch (err) {
+        if (errorEl) {
+          errorEl.textContent = err.message || "登入失敗，請確認使用者 ID";
+          errorEl.style.display = "block";
+        }
+        if (loginBtn) { loginBtn.disabled = false; loginBtn.textContent = "登入"; }
+      }
+    });
+  }
 }
 
-function startApp() {
+// ============================================================
+// BOOTSTRAP
+// ============================================================
+
+async function startApp() {
   bindEvents();
-  initializeApp();
+
+  const token = getToken();
+  if (token) {
+    state.role = decodeJwtRole(token);
+    renderMainScreen();
+    await initializeApp();
+  } else {
+    renderLoginScreen();
+  }
 }
 
 if (document.readyState === "loading") {
