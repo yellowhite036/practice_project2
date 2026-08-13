@@ -1,0 +1,13 @@
+{
+  "name": "practice-project2-e2e",
+  "version": "1.0.0",
+  "private": true,
+  "scripts": {
+    "test": "playwright test",
+    "test:e2e": "playwright test"
+  },
+  "devDependencies": {
+    "@playwright/test": "1.62.1",
+    "pg": "^8.12.0"
+  }
+}
