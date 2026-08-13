@@ -23,14 +23,28 @@ async function setupE2EAdmin() {
 async function clearE2EData() {
   await pool.query(`
     DELETE FROM system_logs
-    WHERE work_order_id LIKE 'E2E-%'
-       OR created_by_user_id LIKE 'E2E-%';
+    WHERE work_order_id IN (
+      SELECT work_order_id
+      FROM work_orders
+      WHERE work_order_id LIKE 'E2E-%'
+        OR product_id LIKE 'E2E-%'
+        OR mold_id LIKE 'E2E-%'
+        OR creator_user_id LIKE 'E2E-%'
+    )
+    OR created_by_user_id LIKE 'E2E-%';
 
     DELETE FROM inventory_transactions
-    WHERE work_order_id LIKE 'E2E-%'
-       OR material_id LIKE 'E2E-%'
-       OR product_id LIKE 'E2E-%'
-       OR created_by_user_id LIKE 'E2E-%';
+    WHERE work_order_id IN (
+      SELECT work_order_id
+      FROM work_orders
+      WHERE work_order_id LIKE 'E2E-%'
+        OR product_id LIKE 'E2E-%'
+        OR mold_id LIKE 'E2E-%'
+        OR creator_user_id LIKE 'E2E-%'
+    )
+    OR material_id LIKE 'E2E-%'
+    OR product_id LIKE 'E2E-%'
+    OR created_by_user_id LIKE 'E2E-%';
 
     DELETE FROM work_orders
     WHERE work_order_id LIKE 'E2E-%'

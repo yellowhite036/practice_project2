@@ -403,7 +403,7 @@ module.exports = function createWorkOrdersRouter(pool) {
           [
             workOrderId,
             bomItem.material_id,
-            wo.product_id,
+            null,
             "restock",
             refundQty,
             wo.creator_user_id
