@@ -561,6 +561,21 @@ function renderWorkOrders() {
       const product = getProduct(order.productId);
       const mold = getMold(order.moldId);
       const statusClass = order.status === "Pending" ? "warn" : order.status === "In_Progress" ? "ok" : order.status === "Completed" ? "ok" : "bad";
+      
+      const showActions = canWrite();
+      let actionHtml = "-";
+      if (showActions && (order.status === "Pending" || order.status === "In_Progress")) {
+        actionHtml = `<div style="display: flex; gap: 4px;">`;
+        if (order.status === "Pending") {
+          actionHtml += `<button class="secondary-action wo-action-btn" data-action="start" data-id="${order.id}" style="padding: 4px 8px; font-size: 12px;">開始</button>`;
+        }
+        actionHtml += `<button class="primary-action wo-action-btn" data-action="complete" data-id="${order.id}" style="padding: 4px 8px; font-size: 12px;">完成</button>`;
+        if (state.role === "admin" || state.role === "manager") {
+          actionHtml += `<button class="danger-action wo-action-btn" data-action="reject" data-id="${order.id}" style="padding: 4px 8px; font-size: 12px;">拒絕</button>`;
+        }
+        actionHtml += `</div>`;
+      }
+
       return `
         <tr>
           <td><strong>${order.id}</strong></td>
@@ -570,6 +585,7 @@ function renderWorkOrders() {
           <td>${mold ? mold.name : order.moldId}</td>
           <td><span class="status-pill ${statusClass}">${order.status}</span></td>
           <td>${order.creator}</td>
+          <td>${actionHtml}</td>
         </tr>
       `;
     })
@@ -633,6 +649,7 @@ function renderMolds() {
           </div>
           <p>產線位置：${mold.line}</p>
           <p>預計放開：${mold.eta}</p>
+          ${locked && canWrite() ? `<div style="margin-top: 12px; text-align: right;"><button class="secondary-action manual-release-mold-btn" data-id="${mold.id}" type="button">手動釋放</button></div>` : ""}
         </article>
       `;
     })
@@ -724,14 +741,13 @@ async function submitWorkOrder(event) {
     return;
   }
 
-  const now = new Date();
-  const dateStr = `${now.getFullYear().toString().slice(-2)}${String(now.getMonth() + 1).padStart(2, "0")}${String(now.getDate()).padStart(2, "0")}`;
-  const seq = String(state.workOrders.length + 1).padStart(3, "0");
-  const workOrderId = `WO-${dateStr}-${seq}`;
-
+  // work_order_id 一律由後端在 PostgreSQL Transaction 內以 SEQUENCE
+  // 原子產生，前端不再自行拼字串計算流水號。
+  // （舊版用 `state.workOrders.length + 1` 算號碼是非原子操作，
+  //   連續點擊或多人併發建單時會算出重複編號，撞上資料庫唯一鍵，
+  //   這正是「Database constraint conflict」的成因。）
   const storedUser = getStoredUser();
   const payload = {
-    work_order_id: workOrderId,
     product_id: product.id,
     quantity,
     line,
@@ -747,7 +763,11 @@ async function submitWorkOrder(event) {
   if (btn) { btn.disabled = true; btn.textContent = "處理中…"; }
 
   try {
-    await apiRequest("POST", "/work-orders", payload);
+    const createdWorkOrder = await apiRequest("POST", "/work-orders", payload);
+    const workOrderId =
+      createdWorkOrder && createdWorkOrder.work_order_id
+        ? createdWorkOrder.work_order_id
+        : "-";
     state.lastAutomation = { failedAt: -1, success: true };
     addLog("INFO", `工單 ${workOrderId} 已成功建立 (產品: ${product.name}, 數量: ${quantity})`);
     await refreshStateFromApi();
@@ -758,6 +778,17 @@ async function submitWorkOrder(event) {
 
   if (btn) { btn.disabled = false; btn.textContent = "確認派工入模具位"; }
   render();
+}
+
+async function handleWorkOrderAction(id, action) {
+  try {
+    await apiRequest("PUT", `/work-orders/${id}`, { action });
+    addLog("INFO", `工單 ${id} 執行操作: ${action} 成功`);
+    await refreshStateFromApi();
+  } catch (error) {
+    addLog("ERR", `工單 ${id} 操作失敗: ${error.message}`);
+    render();
+  }
 }
 
 // ============================================================
@@ -776,16 +807,80 @@ async function resetState() {
   render();
 }
 
-function restockMaterials() {
+async function restockMaterials() {
   if (!canWrite()) return;
-  addLog("WARN", "一鍵補料功能需透過調整庫存功能操作");
+
+  const lowStock = state.materials.filter((m) => m.stock <= m.safety);
+  if (lowStock.length === 0) {
+    addLog("INFO", "目前無物料低於安全庫存，無需補料");
+    render();
+    return;
+  }
+
+  const restockable = lowStock.filter((m) => m.capacity > 0);
+  const noCapacity = lowStock.filter((m) => !(m.capacity > 0));
+
+  if (noCapacity.length > 0) {
+    const names = noCapacity.map((m) => m.name).join("、");
+    addLog("WARN", `${names} 未設定容量上限，無法自動判斷補料量，請改用「調整庫存」手動處理`);
+  }
+
+  if (restockable.length === 0) {
+    render();
+    return;
+  }
+
+  const summary = restockable
+    .map((m) => `${m.name}：${formatAmount(m.stock)} → ${formatAmount(m.capacity)} ${m.unit}`)
+    .join("\n");
+
+  if (!confirm(`即將補足以下物料至容量上限：\n\n${summary}\n\n確定執行？`)) {
+    return;
+  }
+
+  let successCount = 0;
+  let failCount = 0;
+
+  for (const material of restockable) {
+    const updated = { ...material, stock: material.capacity };
+    try {
+      await apiRequest("PUT", `/materials/${encodeURIComponent(material.id)}`, toApiMaterial(updated));
+      addLog("INFO", `已補料 ${material.id} (${material.name}) 至 ${formatAmount(material.capacity)} ${material.unit}`);
+      successCount++;
+    } catch (error) {
+      addLog("ERR", `補料失敗 ${material.id} (${material.name})：${error.message}`);
+      failCount++;
+    }
+  }
+
+  await refreshStateFromApi();
+  addLog("INFO", `一鍵補料完成：成功 ${successCount} 項，失敗 ${failCount} 項`);
   render();
 }
 
-function releaseScheduledMolds() {
+async function releaseScheduledMolds() {
   if (!canWrite()) return;
-  addLog("WARN", "模具排程放開需透過工單完成/拒絕 API");
-  render();
+  
+  // 根據警告「模具排程放開需透過工單完成/拒絕 API」，
+  // 我們必須找出所有正在佔用模具的活躍工單，並透過 API 將其完成。
+  const activeWOs = state.workOrders.filter(wo => wo.status === 'Pending' || wo.status === 'In_Progress');
+
+  if (activeWOs.length === 0) {
+    addLog("INFO", "目前沒有活躍工單佔用模具");
+    render();
+    return;
+  }
+
+  try {
+    for (const wo of activeWOs) {
+      await apiRequest("PUT", `/work-orders/${wo.id}`, { action: "complete" });
+      addLog("INFO", `已透過完成工單 ${wo.id} 釋放模具`);
+    }
+    await refreshStateFromApi();
+  } catch (error) {
+    addLog("ERR", `釋放模具失敗: ${error.message}`);
+    render();
+  }
 }
 
 // ============================================================
@@ -1034,6 +1129,45 @@ function bindEvents() {
         showStockModal(e.target.dataset.id);
       } else if (e.target.classList.contains("delete-material-btn")) {
         deleteMaterial(e.target.dataset.id);
+      }
+    });
+  }
+
+  const workOrderTable = $("#workOrderTable");
+  if (workOrderTable) {
+    workOrderTable.addEventListener("click", (e) => {
+      if (e.target.classList.contains("wo-action-btn")) {
+        const id = e.target.dataset.id;
+        const action = e.target.dataset.action;
+        handleWorkOrderAction(id, action);
+      }
+    });
+  }
+
+  const moldCards = $("#moldCards");
+  if (moldCards) {
+    moldCards.addEventListener("click", async (e) => {
+      if (e.target.classList.contains("manual-release-mold-btn")) {
+        const id = e.target.dataset.id;
+        const mold = state.molds.find(m => m.id === id);
+        if (!mold) return;
+        try {
+          e.target.disabled = true;
+          e.target.textContent = "處理中...";
+          await apiRequest("PUT", `/molds/${id}`, {
+            name: mold.name,
+            status: "Idle",
+            line: mold.line === "-" ? null : mold.line,
+            eta: mold.eta === "-" ? null : mold.eta,
+            product_id: null,
+            version: mold.version
+          });
+          addLog("INFO", `已手動強制釋放模具: ${mold.name} (${id})`);
+          await refreshStateFromApi();
+        } catch (err) {
+          addLog("ERR", `手動釋放失敗: ${err.message}`);
+          render();
+        }
       }
     });
   }

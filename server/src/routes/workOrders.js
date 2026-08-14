@@ -21,10 +21,8 @@ const WORK_ORDER_COLUMNS = `
 `;
 
 function validateWorkOrder(body) {
-  if (!body.work_order_id) {
-    return "work_order_id is required";
-  }
-
+  // work_order_id 一律由後端在 Transaction 內以 SEQUENCE 原子產生，
+  // 不再接受/要求前端傳入，避免 client 端拼湊編號造成的唯一鍵衝突。
   if (!body.product_id) {
     return "product_id is required";
   }
@@ -509,19 +507,22 @@ module.exports = function createWorkOrdersRouter(pool) {
    * 4. Check Material stock
    * 5. Lock Mold
    * 6. Check Mold status
-   * 7. Insert Work Order
-   * 8. Deduct Material stock
-   * 9. Insert consume transactions (負數，代表庫存流出)
-   * 10. Set Mold -> In_Use
-   * 11. Insert System Log
+   * 7. Generate Work Order ID (SEQUENCE, 原子產生, 取代前端拼字串)
+   * 8. Insert Work Order
+   * 9. Deduct Material stock
+   * 10. Insert consume transactions (負數，代表庫存流出)
+   * 11. Set Mold -> In_Use
+   * 12. Insert System Log
    *
    * 注意：Product stock 不在建立時增加，
    * 而是在 /complete（或 PUT + action=complete）時才增加。
+   * work_order_id 不再接受前端傳入，一律由本 Transaction 產生，
+   * 避免多個請求併發時算出相同編號而撞上 PK 唯一鍵。
    */
   router.post(
     "/",
     requireAuth,
-    requireRole(["admin", "manager"]),
+    requireRole(["admin", "manager", "operator"]),
     asyncRoute(async (req, res) => {
       const validationError = validateWorkOrder(req.body);
 
@@ -530,7 +531,6 @@ module.exports = function createWorkOrdersRouter(pool) {
       }
 
       const {
-        work_order_id,
         product_id,
         quantity,
         line,
@@ -641,7 +641,29 @@ module.exports = function createWorkOrdersRouter(pool) {
         }
 
         /*
-         * 7. Insert Work Order
+         * 7. Generate Work Order ID (原子產生，取代前端拼字串)
+         *
+         * 使用 PostgreSQL SEQUENCE (work_order_seq) 在同一個
+         * Transaction 內取號，nextval() 本身就是原子操作，
+         * 併發呼叫也保證每次拿到不同的數字，不會重複。
+         * 格式：WO-YYMMDD-NNNNN（NNNNN 為 sequence 值，左補零至 5 碼）
+         */
+        const seqResult = await client.query(
+          `SELECT nextval('work_order_seq') AS seq`
+        );
+
+        const seqValue = seqResult.rows[0].seq;
+
+        const now = new Date();
+        const dateStr =
+          String(now.getFullYear()).slice(-2) +
+          String(now.getMonth() + 1).padStart(2, "0") +
+          String(now.getDate()).padStart(2, "0");
+
+        const work_order_id = `WO-${dateStr}-${String(seqValue).padStart(5, "0")}`;
+
+        /*
+         * 8. Insert Work Order
          *
          * inventory_transactions.work_order_id
          * FK -> work_orders.work_order_id
@@ -674,8 +696,8 @@ module.exports = function createWorkOrdersRouter(pool) {
         );
 
         /*
-         * 8. Deduct Material stock
-         * 9. Insert consume transactions（庫存流出記為負數）
+         * 9. Deduct Material stock
+         * 10. Insert consume transactions（庫存流出記為負數）
          */
         for (const bomItem of bomItems) {
           const required =
@@ -711,7 +733,7 @@ module.exports = function createWorkOrdersRouter(pool) {
         }
 
         /*
-         * 10. Update Mold -> In_Use
+         * 11. Update Mold -> In_Use
          */
         await client.query(
           `UPDATE molds
@@ -723,7 +745,7 @@ module.exports = function createWorkOrdersRouter(pool) {
         );
 
         /*
-         * 11. Insert System Log
+         * 12. Insert System Log
          */
         await client.query(
           `INSERT INTO system_logs (
