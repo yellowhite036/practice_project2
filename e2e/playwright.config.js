@@ -13,11 +13,31 @@ module.exports = defineConfig({
     trace: 'retain-on-failure',
     video: 'retain-on-failure',
     screenshot: 'only-on-failure',
+    // ────────────────────────────────────────────────────────
+    // 無痕除錯：強制 headless 模式，不開啟任何瀏覽器 UI 視窗
+    // ────────────────────────────────────────────────────────
+    launchOptions: {
+      headless: true,
+    },
   },
   projects: [
+    // ── 原有 API / 純 request 測試 ──────────────────────────
     {
       name: 'chromium',
+      testMatch: /work-orders\.spec\.js/,
       use: { ...devices['Desktop Chrome'] },
+    },
+    // ── 一般使用者生產流程 UI 自動化測試 ─────────────────────
+    // 以 headless Chromium 執行；timeout 加長以容納 UI 等待
+    {
+      name: 'production-flow-ui',
+      testMatch: /production-flow-ui\.spec\.js/,
+      use: {
+        ...devices['Desktop Chrome'],
+        launchOptions: { headless: true },
+        actionTimeout: 15_000,
+        navigationTimeout: 30_000,
+      },
     },
   ],
 });

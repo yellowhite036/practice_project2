@@ -4,7 +4,8 @@
   "private": true,
   "scripts": {
     "test": "playwright test",
-    "test:e2e": "playwright test"
+    "test:e2e": "playwright test",
+    "test:production-flow": "playwright test tests/production-flow-ui.spec.js --project=production-flow-ui"
   },
   "devDependencies": {
     "@playwright/test": "1.62.1",
