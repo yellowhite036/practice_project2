@@ -237,6 +237,599 @@ function Ensure-Server {
 }
 
 # ============================================================
+# 取得 Web API URL
+# ============================================================
+
+function Get-ApiBaseUrl {
+    $services = docker compose config --services 2>$null
+
+    if ($services -contains "nginx") {
+        $port = docker compose port nginx 80 2>$null
+
+        if ($port -match ":(\d+)$") {
+            return "http://127.0.0.1:$($Matches[1])"
+        }
+    }
+
+    if ($services -contains "frontend") {
+        $port = docker compose port frontend 80 2>$null
+
+        if ($port -match ":(\d+)$") {
+            return "http://127.0.0.1:$($Matches[1])"
+        }
+    }
+
+    if ($services -contains "web") {
+        $port = docker compose port web 80 2>$null
+
+        if ($port -match ":(\d+)$") {
+            return "http://127.0.0.1:$($Matches[1])"
+        }
+    }
+
+    return "http://127.0.0.1"
+}
+
+# ============================================================
+# 三產線並發 Worker
+#
+# 模擬：
+#
+#   Line-1 ─┐
+#   Line-2 ─┼─> Product A
+#   Line-3 ─┘
+#
+# 三條產線：
+#   - 同一時間送出 POST /api/work-orders
+#   - 相同 product_id
+#   - 相同 mold_id
+#   - 相同 material
+#
+# 預期：
+#   1 條成功
+#   2 條被拒絕
+#
+# Worker 使用獨立 Node.js Process。
+# 每個 Worker 都是獨立程序。
+# ============================================================
+
+function Run-FactoryRaceTest {
+    Write-Title "3 條產線並發搶同一模具 / 材料"
+
+    if (-not (Ensure-Server)) {
+        Write-ErrorMsg "Docker Server 尚未啟動"
+        Read-Host "按 Enter 返回主選單"
+        return
+    }
+
+    if (-not (Test-PostgresNotExposed)) {
+        Read-Host "按 Enter 返回主選單"
+        return
+    }
+
+    if (-not (Get-Command node -ErrorAction SilentlyContinue)) {
+        Write-ErrorMsg "找不到 Node.js"
+        Read-Host "按 Enter 返回主選單"
+        return
+    }
+
+    $ApiBaseUrl = Get-ApiBaseUrl
+
+    Write-Host ""
+    Write-Host "API：" -NoNewline
+    Write-Host " $ApiBaseUrl" -ForegroundColor Yellow
+
+    Write-Host ""
+    Write-Host "模擬工廠：" -ForegroundColor White
+    Write-Host "  產線 A -> Product A -> Mold Y -> Material X"
+    Write-Host "  產線 B -> Product A -> Mold Y -> Material X"
+    Write-Host "  產線 C -> Product A -> Mold Y -> Material X"
+    Write-Host ""
+    Write-Host "三個 Worker 將同時送出生產工單。" -ForegroundColor Cyan
+    Write-Host ""
+
+    # --------------------------------------------------------
+    # 初始化 E2E 資料
+    # --------------------------------------------------------
+
+    Write-Host "初始化 E2E 資料..." -ForegroundColor Cyan
+    node -e "require('./e2e/utils/db.js').clearE2EData(); require('./e2e/utils/db.js').seedE2EData();"
+    if ($LASTEXITCODE -ne 0) {
+        Write-ErrorMsg "初始化 E2E 資料失敗"
+        Read-Host "按 Enter 返回主選單"
+        return
+    }
+
+    # --------------------------------------------------------
+    # 建立暫時 Worker Script
+    #
+    # run.ps1 執行完後會自動刪除。
+    # 不會新增專案檔案。
+    # --------------------------------------------------------
+
+    $WorkerScript = Join-Path $env:TEMP "practice-project2-factory-worker-$([guid]::NewGuid().ToString()).js"
+
+    $WorkerCode = @'
+const workerId = process.argv[2];
+const apiBaseUrl = process.argv[3];
+const resultFile = process.argv[4];
+
+const ADMIN_ID = "E2E-ADMIN";
+
+const fs = require("fs");
+
+function writeResult(code) {
+  fs.writeFileSync(resultFile, String(code), "utf8");
+  process.exitCode = code;
+}
+
+const payload = {
+  work_order_id: `E2E-FACTORY-${workerId}-${Date.now()}`,
+  product_id: "E2E-PRD-CREATE",
+  quantity: 5,
+  line: workerId,
+  mold_id: "E2E-MOLD-CREATE",
+  creator_user_id: ADMIN_ID,
+  creator_name: ADMIN_ID
+};
+
+function sleep(ms) {
+  return new Promise(resolve => setTimeout(resolve, ms));
+}
+
+async function main() {
+  console.log("");
+  console.log("============================================================");
+  console.log(` Worker ${workerId}`);
+  console.log("============================================================");
+  console.log(`產線       : ${workerId}`);
+  console.log(`Product    : ${payload.product_id}`);
+  console.log(`Mold       : ${payload.mold_id}`);
+  console.log(`Quantity   : ${payload.quantity}`);
+  console.log(`開始時間   : ${new Date().toISOString()}`);
+
+  try {
+    const loginResponse = await fetch(
+      `${apiBaseUrl}/api/auth/login`,
+      {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json"
+        },
+        body: JSON.stringify({
+          user_id: ADMIN_ID
+        })
+      }
+    );
+
+    const loginText = await loginResponse.text();
+
+    let loginBody = null;
+
+    try {
+      loginBody = JSON.parse(loginText);
+    } catch {
+      loginBody = null;
+    }
+
+    if (!loginResponse.ok) {
+      console.log(`[REJECTED] Login HTTP ${loginResponse.status}: ${loginText}`);
+      writeResult(1);
+      return;
+    }
+
+    const token = loginBody?.token;
+
+    if (!token) {
+      console.log("[ERROR] Login response 沒有 token");
+      writeResult(1);
+      return;
+    }
+
+    console.log("[OK] Login 成功");
+
+    await sleep(100);
+
+    const startTime = process.hrtime.bigint();
+
+    const response = await fetch(
+      `${apiBaseUrl}/api/work-orders`,
+      {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "Authorization": `Bearer ${token}`
+        },
+        body: JSON.stringify(payload)
+      }
+    );
+
+    const elapsedMs = Number(process.hrtime.bigint() - startTime) / 1000000;
+
+    const responseText = await response.text();
+
+    let body = null;
+
+    try {
+      body = JSON.parse(responseText);
+    } catch {
+      body = null;
+    }
+
+    console.log("");
+    console.log(`HTTP Status : ${response.status}`);
+    console.log(`耗時        : ${elapsedMs.toFixed(2)} ms`);
+
+    if (response.status === 201) {
+      console.log("");
+      console.log("[SUCCESS] 搶到模具");
+      console.log(`Work Order  : ${body?.work_order_id || payload.work_order_id}`);
+      console.log(`Status      : ${body?.status || "Unknown"}`);
+      console.log(`Mold        : ${payload.mold_id}`);
+      writeResult(0);
+      return;
+    }
+
+    if (response.status === 409) {
+      console.log("");
+      console.log("[REJECTED] 生產請求被系統拒絕");
+
+      if (body?.error) {
+        console.log(`原因        : ${body.error}`);
+      } else {
+        console.log(`Response    : ${responseText}`);
+      }
+
+      writeResult(0);
+      return;
+    }
+
+    console.log("");
+    console.log("[ERROR] 非預期 HTTP Response");
+    console.log(`Response    : ${responseText}`);
+
+    writeResult(1);
+    return;
+  } catch (error) {
+    console.log("");
+    console.log("[ERROR] Worker 執行失敗");
+    console.log(error.message);
+
+    writeResult(1);
+    return;
+  }
+}
+
+main();
+'@
+
+    $resultFiles = @{}
+
+    try {
+        Set-Content `
+            -Path $WorkerScript `
+            -Value $WorkerCode `
+            -Encoding UTF8
+
+        Write-Success "Worker Script 建立完成"
+
+        # ----------------------------------------------------
+        # 啟動三個獨立 Node.js Process
+        # ----------------------------------------------------
+
+        Write-Host ""
+        Write-Host "同時啟動 3 個 Worker..." -ForegroundColor Cyan
+        Write-Host ""
+
+        $workers = @(
+            "LINE-A",
+            "LINE-B",
+            "LINE-C"
+        )
+
+        $processes = @()
+
+        foreach ($worker in $workers) {
+
+            $resultFile = Join-Path $env:TEMP "practice-project2-result-$worker-$([guid]::NewGuid().ToString()).txt"
+            $resultFiles[$worker] = $resultFile
+
+            $process = Start-Process `
+                -FilePath "node" `
+                -ArgumentList @(
+                    $WorkerScript,
+                    $worker,
+                    $ApiBaseUrl,
+                    $resultFile
+                ) `
+                -NoNewWindow `
+                -PassThru
+
+            $processes += $process
+
+            Write-Host "  Worker 啟動：" -NoNewline
+            Write-Host $worker -ForegroundColor Yellow
+        }
+
+        Write-Host ""
+        Write-Host "等待三個 Worker 完成..." -ForegroundColor Cyan
+
+        # ----------------------------------------------------
+        # 等待全部 Worker
+        # ----------------------------------------------------
+
+        foreach ($process in $processes) {
+            $process.WaitForExit()
+            $process.Refresh()
+        }
+
+        Write-Host ""
+        Write-Title "並發搶工單結果"
+
+        $errorCount = 0
+
+        foreach ($worker in $workers) {
+
+            $resultFile = $resultFiles[$worker]
+
+            if (-not (Test-Path $resultFile)) {
+                Write-Host "Worker $worker 沒有寫入結果檔案（可能異常終止）" -ForegroundColor Red
+                $errorCount++
+                continue
+            }
+
+            $exitCodeText = (Get-Content $resultFile -Raw).Trim()
+
+            if ($exitCodeText -eq "0") {
+                Remove-Item $resultFile -Force -ErrorAction SilentlyContinue
+                continue
+            }
+
+            Write-Host "Worker $worker exit code: $exitCodeText" -ForegroundColor Red
+            $errorCount++
+
+            Remove-Item $resultFile -Force -ErrorAction SilentlyContinue
+        }
+
+        # ----------------------------------------------------
+        # 使用 Docker PostgreSQL 直接驗證最終資料
+        # ----------------------------------------------------
+
+        Write-Host "驗證資料庫最終狀態..." -ForegroundColor Cyan
+        Write-Host ""
+
+        $postgresContainer = "practice_project2-postgres-1"
+
+        $dbCheckSql = @"
+SELECT
+    COUNT(*) AS work_order_count,
+    COUNT(*) FILTER (WHERE status = 'Pending') AS pending_count
+FROM work_orders
+WHERE creator_user_id = 'E2E-ADMIN';
+"@
+
+        $dbOutput = docker exec `
+            -i `
+            $postgresContainer `
+            psql `
+            -U postgres `
+            -d practice_project2 `
+            -t `
+            -A `
+            -c $dbCheckSql 2>&1
+
+        if ($LASTEXITCODE -ne 0) {
+            Write-ErrorMsg "無法驗證 PostgreSQL"
+            Write-Host $dbOutput
+
+            Remove-Item $WorkerScript -Force -ErrorAction SilentlyContinue
+
+            Read-Host "按 Enter 返回主選單"
+            return
+        }
+
+        $dbLine = ($dbOutput | Select-Object -Last 1).ToString().Trim()
+
+        $parts = $dbLine -split "\|"
+
+        $workOrderCount = 0
+        $pendingCount = 0
+
+        if ($parts.Count -ge 2) {
+            [int]::TryParse($parts[0], [ref]$workOrderCount) | Out-Null
+            [int]::TryParse($parts[1], [ref]$pendingCount) | Out-Null
+        }
+
+        Write-Host "  工單數量：" -NoNewline
+        Write-Host $workOrderCount -ForegroundColor Yellow
+
+        Write-Host "  Pending ：" -NoNewline
+        Write-Host $pendingCount -ForegroundColor Yellow
+
+        # ----------------------------------------------------
+        # 驗證模具
+        # ----------------------------------------------------
+
+        $moldSql = @"
+SELECT status
+FROM molds
+WHERE mold_id = 'E2E-MOLD-CREATE';
+"@
+
+        $moldStatus = docker exec `
+            -i `
+            $postgresContainer `
+            psql `
+            -U postgres `
+            -d practice_project2 `
+            -t `
+            -A `
+            -c $moldSql 2>&1
+
+        if ($LASTEXITCODE -ne 0) {
+            Write-ErrorMsg "無法讀取模具狀態"
+            Write-Host $moldStatus
+        }
+        else {
+            $moldStatus = ($moldStatus | Select-Object -Last 1).ToString().Trim()
+
+            Write-Host "  模具狀態：" -NoNewline
+            Write-Host $moldStatus -ForegroundColor Yellow
+        }
+
+        # ----------------------------------------------------
+        # 驗證材料庫存
+        # ----------------------------------------------------
+
+        $materialSql = @"
+SELECT stock
+FROM materials
+WHERE material_id = 'E2E-MAT-CREATE';
+"@
+
+        $materialStock = docker exec `
+            -i `
+            $postgresContainer `
+            psql `
+            -U postgres `
+            -d practice_project2 `
+            -t `
+            -A `
+            -c $materialSql 2>&1
+
+        if ($LASTEXITCODE -ne 0) {
+            Write-ErrorMsg "無法讀取材料庫存"
+            Write-Host $materialStock
+        }
+        else {
+            $materialStock = ($materialStock | Select-Object -Last 1).ToString().Trim()
+
+            Write-Host "  材料庫存：" -NoNewline
+            Write-Host $materialStock -ForegroundColor Yellow
+        }
+
+        # ----------------------------------------------------
+        # 最終判定
+        # ----------------------------------------------------
+
+        Write-Host ""
+
+        if (
+            $workOrderCount -eq 1 -and
+            $pendingCount -eq 1 -and
+            $moldStatus -eq "In_Use" -and
+            [decimal]$materialStock -eq 90
+        ) {
+            Write-Host "============================================================" -ForegroundColor Green
+            Write-Host "  並發競爭驗證成功" -ForegroundColor Green
+            Write-Host "============================================================" -ForegroundColor Green
+            Write-Host ""
+            Write-Host "  [OK] 3 條產線同時競爭"
+            Write-Host "  [OK] 只有 1 張工單成功"
+            Write-Host "  [OK] 模具只有 1 條產線使用"
+            Write-Host "  [OK] 材料只扣除 1 次"
+            Write-Host "  [OK] 材料沒有變成負數"
+            Write-Host "  [OK] 資料庫狀態一致"
+            Write-Host ""
+        }
+        else {
+            Write-Host "============================================================" -ForegroundColor Red
+            Write-Host "  並發競爭驗證失敗" -ForegroundColor Red
+            Write-Host "============================================================" -ForegroundColor Red
+            Write-Host ""
+
+            Write-Host "  預期：" -ForegroundColor Yellow
+            Write-Host "    Work Orders = 1"
+            Write-Host "    Pending     = 1"
+            Write-Host "    Mold        = In_Use"
+            Write-Host "    Material    = 90"
+
+            Write-Host ""
+            Write-Host "  實際：" -ForegroundColor Yellow
+            Write-Host "    Work Orders = $workOrderCount"
+            Write-Host "    Pending     = $pendingCount"
+            Write-Host "    Mold        = $moldStatus"
+            Write-Host "    Material    = $materialStock"
+
+            $errorCount++
+        }
+
+        # ----------------------------------------------------
+        # 顯示相關工單
+        # ----------------------------------------------------
+
+        Write-Host ""
+        Write-Host "本次競爭產生的工單：" -ForegroundColor Cyan
+
+        $ordersSql = @"
+SELECT
+    work_order_id,
+    line,
+    product_id,
+    mold_id,
+    quantity,
+    status
+FROM work_orders
+WHERE creator_user_id = 'E2E-ADMIN'
+ORDER BY work_order_id;
+"@
+
+        $ordersOutput = docker exec `
+            -i `
+            $postgresContainer `
+            psql `
+            -U postgres `
+            -d practice_project2 `
+            -c $ordersSql 2>&1
+
+        Write-Host $ordersOutput
+
+        Write-Host ""
+
+        if ($errorCount -eq 0) {
+            Write-Success "3 Worker 並發競爭測試完成"
+        }
+        else {
+            Write-ErrorMsg "並發競爭測試發現異常"
+        }
+    }
+    finally {
+        # ----------------------------------------------------
+        # 清除 E2E 資料
+        # ----------------------------------------------------
+
+        Write-Host "清除 E2E 資料..." -ForegroundColor Cyan
+        node -e "require('./e2e/utils/db.js').clearE2EData();"
+
+        # ----------------------------------------------------
+        # 清除暫時 Worker Script
+        # ----------------------------------------------------
+
+        if (Test-Path $WorkerScript) {
+            Remove-Item $WorkerScript -Force -ErrorAction SilentlyContinue
+        }
+
+        # ----------------------------------------------------
+        # 清除殘留的 Result 檔案
+        # ----------------------------------------------------
+
+        if ($resultFiles) {
+            foreach ($worker in $resultFiles.Keys) {
+                $rf = $resultFiles[$worker]
+                if (Test-Path $rf) {
+                    Remove-Item $rf -Force -ErrorAction SilentlyContinue
+                }
+            }
+        }
+
+        Set-Location $ProjectRoot
+    }
+
+    Write-Host ""
+    Read-Host "按 Enter 返回主選單"
+}
+
+# ============================================================
 # Playwright
 # ============================================================
 
@@ -271,6 +864,7 @@ function Run-Playwright {
     Write-Host "  [2] work-orders"
     Write-Host "  [3] 全部 E2E"
     Write-Host "  [4] production-flow-ui + 顯示報告"
+    Write-Host "  [5] 3 條產線並發搶同一模具 / 材料"
     Write-Host "  [0] 返回"
     Write-Host ""
 
@@ -317,6 +911,14 @@ function Run-Playwright {
             else {
                 Write-ErrorMsg "E2E 測試失敗"
             }
+        }
+
+        "5" {
+            Set-Location $ProjectRoot
+
+            Run-FactoryRaceTest
+
+            return
         }
 
         "0" {
