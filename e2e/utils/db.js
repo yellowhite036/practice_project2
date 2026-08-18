@@ -1,35 +1,122 @@
-const { Pool } = require('pg');
+const { execFileSync } = require('child_process');
 
-const pool = new Pool({
-  host: process.env.DATABASE_HOST || process.env.TEST_DB_HOST || 'localhost',
-  port: Number(process.env.DATABASE_PORT || process.env.TEST_DB_PORT || 5432),
-  database: process.env.DATABASE_NAME || process.env.TEST_DB_NAME || 'practice_project2',
-  user: process.env.DATABASE_USER || process.env.TEST_DB_USER || 'postgres',
-  password: process.env.DATABASE_PASSWORD || process.env.TEST_DB_PASSWORD || 'postgres',
-});
+const CONTAINER_NAME = 'practice_project2-postgres-1';
+const DB_USER = 'postgres';
+const DB_NAME = 'practice_project2';
 
-async function setupE2EAdmin() {
-  await pool.query(
-    `INSERT INTO users (user_id, name, role)
-     VALUES ($1, $2, $3)
-     ON CONFLICT (user_id) DO UPDATE
-       SET name = EXCLUDED.name,
-           role = EXCLUDED.role,
-           updated_at = now()`,
-    ['E2E-ADMIN', 'E2E Admin User', 'admin']
+function dockerExec(args) {
+  return execFileSync(
+    'docker',
+    ['exec', '-i', CONTAINER_NAME, ...args],
+    {
+      stdio: ['ignore', 'pipe', 'pipe'],
+      encoding: 'utf8',
+    }
   );
 }
 
-async function clearE2EData() {
-  await pool.query(`
+// 執行 INSERT / UPDATE / DELETE
+function dockerPsql(sql) {
+  try {
+    return dockerExec([
+      'psql',
+      '-U',
+      DB_USER,
+      '-d',
+      DB_NAME,
+      '-v',
+      'ON_ERROR_STOP=1',
+      '-c',
+      sql,
+    ]);
+  } catch (error) {
+    const stderr = error.stderr?.toString() || '';
+
+    throw new Error(
+      `Docker PostgreSQL SQL 執行失敗\n${stderr || error.message}`
+    );
+  }
+}
+
+// 執行 SELECT，回傳 JSON
+function dockerPsqlQuery(sql) {
+  try {
+    const output = dockerExec([
+      'psql',
+      '-U',
+      DB_USER,
+      '-d',
+      DB_NAME,
+      '-v',
+      'ON_ERROR_STOP=1',
+      '-t',
+      '-A',
+      '-F',
+      '\t',
+      '-c',
+      sql,
+    ]);
+
+    const text = output.trim();
+
+    if (!text) {
+      return [];
+    }
+
+    return text
+      .split(/\r?\n/)
+      .filter(Boolean)
+      .map((line) => line.split('\t'));
+  } catch (error) {
+    const stderr = error.stderr?.toString() || '';
+
+    throw new Error(
+      `Docker PostgreSQL Query 執行失敗\n${stderr || error.message}`
+    );
+  }
+}
+
+function escapeSql(value) {
+  return String(value).replace(/'/g, "''");
+}
+
+function waitForPostgres() {
+  try {
+    dockerExec([
+      'pg_isready',
+      '-U',
+      DB_USER,
+      '-d',
+      DB_NAME,
+    ]);
+
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function setupE2EAdmin() {
+  dockerPsql(`
+    INSERT INTO users (user_id, name, role)
+    VALUES ('E2E-ADMIN', 'E2E Admin User', 'admin')
+    ON CONFLICT (user_id) DO UPDATE
+    SET name = EXCLUDED.name,
+        role = EXCLUDED.role,
+        updated_at = now();
+  `);
+}
+
+function clearE2EData() {
+  dockerPsql(`
     DELETE FROM system_logs
     WHERE work_order_id IN (
       SELECT work_order_id
       FROM work_orders
       WHERE work_order_id LIKE 'E2E-%'
-        OR product_id LIKE 'E2E-%'
-        OR mold_id LIKE 'E2E-%'
-        OR creator_user_id LIKE 'E2E-%'
+         OR product_id LIKE 'E2E-%'
+         OR mold_id LIKE 'E2E-%'
+         OR creator_user_id LIKE 'E2E-%'
     )
     OR created_by_user_id LIKE 'E2E-%';
 
@@ -38,9 +125,9 @@ async function clearE2EData() {
       SELECT work_order_id
       FROM work_orders
       WHERE work_order_id LIKE 'E2E-%'
-        OR product_id LIKE 'E2E-%'
-        OR mold_id LIKE 'E2E-%'
-        OR creator_user_id LIKE 'E2E-%'
+         OR product_id LIKE 'E2E-%'
+         OR mold_id LIKE 'E2E-%'
+         OR creator_user_id LIKE 'E2E-%'
     )
     OR material_id LIKE 'E2E-%'
     OR product_id LIKE 'E2E-%'
@@ -73,11 +160,12 @@ async function clearE2EData() {
   `);
 }
 
-async function seedE2EData() {
-  await setupE2EAdmin();
+function seedE2EData() {
+  setupE2EAdmin();
 
-  await pool.query(`
-    INSERT INTO materials (material_id, name, unit, stock, capacity, safety_stock, location)
+  dockerPsql(`
+    INSERT INTO materials
+      (material_id, name, unit, stock, capacity, safety_stock, location)
     VALUES
       ('E2E-MAT-CREATE', 'E2E Material Create', 'pcs', 100, 1000, 10, 'E2E-A1'),
       ('E2E-MAT-START', 'E2E Material Start', 'pcs', 100, 1000, 10, 'E2E-A2'),
@@ -87,7 +175,8 @@ async function seedE2EData() {
       ('E2E-MAT-LOW', 'E2E Material Low', 'pcs', 10, 1000, 10, 'E2E-A6'),
       ('E2E-MAT-INVALID', 'E2E Material Invalid', 'pcs', 100, 1000, 10, 'E2E-A7');
 
-    INSERT INTO molds (mold_id, name, status, line)
+    INSERT INTO molds
+      (mold_id, name, status, line)
     VALUES
       ('E2E-MOLD-CREATE', 'E2E Mold Create', 'Idle', 'L1'),
       ('E2E-MOLD-START', 'E2E Mold Start', 'Idle', 'L1'),
@@ -97,7 +186,8 @@ async function seedE2EData() {
       ('E2E-MOLD-LOW', 'E2E Mold Low', 'Idle', 'L1'),
       ('E2E-MOLD-INVALID', 'E2E Mold Invalid', 'Idle', 'L1');
 
-    INSERT INTO products (product_id, name, cycle_minutes, mold_id, stock)
+    INSERT INTO products
+      (product_id, name, cycle_minutes, mold_id, stock)
     VALUES
       ('E2E-PRD-CREATE', 'E2E Product Create', 10, 'E2E-MOLD-CREATE', 0),
       ('E2E-PRD-START', 'E2E Product Start', 10, 'E2E-MOLD-START', 0),
@@ -107,7 +197,8 @@ async function seedE2EData() {
       ('E2E-PRD-LOW', 'E2E Product Low', 10, 'E2E-MOLD-LOW', 0),
       ('E2E-PRD-INVALID', 'E2E Product Invalid', 10, 'E2E-MOLD-INVALID', 0);
 
-    INSERT INTO bom_table (bom_id, product_id, material_id, amount_per_unit)
+    INSERT INTO bom_table
+      (bom_id, product_id, material_id, amount_per_unit)
     VALUES
       ('E2E-BOM-CREATE', 'E2E-PRD-CREATE', 'E2E-MAT-CREATE', 2),
       ('E2E-BOM-START', 'E2E-PRD-START', 'E2E-MAT-START', 2),
@@ -120,7 +211,10 @@ async function seedE2EData() {
 }
 
 module.exports = {
-  pool,
+  waitForPostgres,
+  dockerPsql,
+  dockerPsqlQuery,
+  escapeSql,
   setupE2EAdmin,
   seedE2EData,
   clearE2EData,
