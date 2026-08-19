@@ -28,6 +28,10 @@ function validateMaterial(body) {
     return "unit is required";
   }
 
+  if (body.stock !== undefined && Number(body.stock) < 0) {
+    return "stock must be greater than or equal to 0";
+  }
+
   return null;
 }
 
