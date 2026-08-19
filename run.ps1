@@ -294,7 +294,12 @@ function Get-ApiBaseUrl {
 # ============================================================
 
 function Run-FactoryRaceTest {
-    Write-Title "3 條產線並發搶同一模具 / 材料"
+    param(
+        [ValidateRange(2, 100)]
+        [int]$WorkerCount = 3
+    )
+
+    Write-Title "$WorkerCount 條產線並發搶同一模具 / 材料"
 
     if (-not (Ensure-Server)) {
         Write-ErrorMsg "Docker Server 尚未啟動"
@@ -321,11 +326,9 @@ function Run-FactoryRaceTest {
 
     Write-Host ""
     Write-Host "模擬工廠：" -ForegroundColor White
-    Write-Host "  產線 A -> Product A -> Mold Y -> Material X"
-    Write-Host "  產線 B -> Product A -> Mold Y -> Material X"
-    Write-Host "  產線 C -> Product A -> Mold Y -> Material X"
+    Write-Host "  $WorkerCount 條產線 -> Product A -> Mold Y -> Material X"
     Write-Host ""
-    Write-Host "三個 Worker 將同時送出生產工單。" -ForegroundColor Cyan
+    Write-Host "$WorkerCount 個 Worker 將同時送出生產工單。" -ForegroundColor Cyan
     Write-Host ""
 
     # --------------------------------------------------------
@@ -514,18 +517,14 @@ main();
         Write-Success "Worker Script 建立完成"
 
         # ----------------------------------------------------
-        # 啟動三個獨立 Node.js Process
+        # 啟動獨立 Node.js Process
         # ----------------------------------------------------
 
         Write-Host ""
-        Write-Host "同時啟動 3 個 Worker..." -ForegroundColor Cyan
+        Write-Host "同時啟動 $WorkerCount 個 Worker..." -ForegroundColor Cyan
         Write-Host ""
 
-        $workers = @(
-            "LINE-A",
-            "LINE-B",
-            "LINE-C"
-        )
+        $workers = @(1..$WorkerCount | ForEach-Object { "LINE-$($_)" })
 
         $processes = @()
 
@@ -552,7 +551,7 @@ main();
         }
 
         Write-Host ""
-        Write-Host "等待三個 Worker 完成..." -ForegroundColor Cyan
+        Write-Host "等待 $WorkerCount 個 Worker 完成..." -ForegroundColor Cyan
 
         # ----------------------------------------------------
         # 等待全部 Worker
@@ -724,7 +723,7 @@ WHERE material_id = 'E2E-MAT-CREATE';
             Write-Host "  並發競爭驗證成功" -ForegroundColor Green
             Write-Host "============================================================" -ForegroundColor Green
             Write-Host ""
-            Write-Host "  [OK] 3 條產線同時競爭"
+            Write-Host "  [OK] $WorkerCount 條產線同時競爭"
             Write-Host "  [OK] 只有 1 張工單成功"
             Write-Host "  [OK] 模具只有 1 條產線使用"
             Write-Host "  [OK] 材料只扣除 1 次"
@@ -787,7 +786,7 @@ ORDER BY work_order_id;
         Write-Host ""
 
         if ($errorCount -eq 0) {
-            Write-Success "3 Worker 並發競爭測試完成"
+            Write-Success "$WorkerCount Worker 並發競爭測試完成"
         }
         else {
             Write-ErrorMsg "並發競爭測試發現異常"
@@ -865,6 +864,7 @@ function Run-Playwright {
     Write-Host "  [3] 全部 E2E"
     Write-Host "  [4] production-flow-ui + 顯示報告"
     Write-Host "  [5] 3 條產線並發搶同一模具 / 材料"
+    Write-Host "  [6] 自訂產線數量併發搶同一模具 / 材料"
     Write-Host "  [0] 返回"
     Write-Host ""
 
@@ -916,7 +916,27 @@ function Run-Playwright {
         "5" {
             Set-Location $ProjectRoot
 
-            Run-FactoryRaceTest
+            Run-FactoryRaceTest -WorkerCount 3
+
+            return
+        }
+
+        "6" {
+            $customWorkerCount = 0
+            $customWorkerInput = Read-Host "請輸入產線數量（2-100）"
+
+            if (-not [int]::TryParse($customWorkerInput, [ref]$customWorkerCount) -or
+                $customWorkerCount -lt 2 -or
+                $customWorkerCount -gt 100) {
+                Write-WarningMsg "產線數量必須是 2 到 100 之間的整數"
+                Set-Location $ProjectRoot
+                Read-Host "按 Enter 返回主選單"
+                return
+            }
+
+            Set-Location $ProjectRoot
+
+            Run-FactoryRaceTest -WorkerCount $customWorkerCount
 
             return
         }

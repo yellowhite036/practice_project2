@@ -14,10 +14,10 @@ module.exports = defineConfig({
     video: 'retain-on-failure',
     screenshot: 'only-on-failure',
     // ────────────────────────────────────────────────────────
-    // 無痕除錯：強制 headless 模式，不開啟任何瀏覽器 UI 視窗
+    // 顯示瀏覽器 UI，方便觀察測試流程
     // ────────────────────────────────────────────────────────
     launchOptions: {
-      headless: true,
+      headless: false,
     },
   },
   projects: [
@@ -28,13 +28,13 @@ module.exports = defineConfig({
       use: { ...devices['Desktop Chrome'] },
     },
     // ── 一般使用者生產流程 UI 自動化測試 ─────────────────────
-    // 以 headless Chromium 執行；timeout 加長以容納 UI 等待
+    // 以顯示 UI 的 Chromium 執行；timeout 加長以容納 UI 等待
     {
       name: 'production-flow-ui',
       testMatch: /production-flow-ui\.spec\.js/,
       use: {
         ...devices['Desktop Chrome'],
-        launchOptions: { headless: true },
+        launchOptions: { headless: false },
         actionTimeout: 15_000,
         navigationTimeout: 30_000,
       },
