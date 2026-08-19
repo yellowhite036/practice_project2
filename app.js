@@ -60,6 +60,7 @@ function createEmptyState() {
 }
 
 let state = createEmptyState();
+const workOrderActionInProgress = new Set();
 
 // ============================================================
 // CONSTANTS / UI HELPERS
@@ -565,13 +566,17 @@ function renderWorkOrders() {
       const showActions = canWrite();
       let actionHtml = "-";
       if (showActions && (order.status === "Pending" || order.status === "In_Progress")) {
+        const inProgress = workOrderActionInProgress.has(order.id);
+        const btnDisabled = inProgress ? "disabled" : "";
+        const btnText = (originalText) => inProgress ? "處理中..." : originalText;
+        
         actionHtml = `<div style="display: flex; gap: 4px;">`;
         if (order.status === "Pending") {
-          actionHtml += `<button class="secondary-action wo-action-btn" data-action="start" data-id="${order.id}" style="padding: 4px 8px; font-size: 12px;">開始</button>`;
+          actionHtml += `<button class="secondary-action wo-action-btn" data-action="start" data-id="${order.id}" style="padding: 4px 8px; font-size: 12px;" ${btnDisabled}>${btnText("開始")}</button>`;
         }
-        actionHtml += `<button class="primary-action wo-action-btn" data-action="complete" data-id="${order.id}" style="padding: 4px 8px; font-size: 12px;">完成</button>`;
+        actionHtml += `<button class="primary-action wo-action-btn" data-action="complete" data-id="${order.id}" style="padding: 4px 8px; font-size: 12px;" ${btnDisabled}>${btnText("完成")}</button>`;
         if (state.role === "admin" || state.role === "manager") {
-          actionHtml += `<button class="danger-action wo-action-btn" data-action="reject" data-id="${order.id}" style="padding: 4px 8px; font-size: 12px;">拒絕</button>`;
+          actionHtml += `<button class="danger-action wo-action-btn" data-action="reject" data-id="${order.id}" style="padding: 4px 8px; font-size: 12px;" ${btnDisabled}>${btnText("拒絕")}</button>`;
         }
         actionHtml += `</div>`;
       }
@@ -781,12 +786,18 @@ async function submitWorkOrder(event) {
 }
 
 async function handleWorkOrderAction(id, action) {
+  if (workOrderActionInProgress.has(id)) return;
+  workOrderActionInProgress.add(id);
+  render();
+
   try {
     await apiRequest("PUT", `/work-orders/${id}`, { action });
     addLog("INFO", `工單 ${id} 執行操作: ${action} 成功`);
     await refreshStateFromApi();
   } catch (error) {
     addLog("ERR", `工單 ${id} 操作失敗: ${error.message}`);
+  } finally {
+    workOrderActionInProgress.delete(id);
     render();
   }
 }
