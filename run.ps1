@@ -152,6 +152,46 @@ function Stop-Server {
 }
 
 # ============================================================
+# Docker 重建
+# ============================================================
+
+function Rebuild-Server {
+    Write-Title "重新建立 Docker 伺服器 (Rebuild)"
+
+    if (-not (Test-Docker)) {
+        Write-ErrorMsg "Docker Desktop 尚未啟動"
+        return $false
+    }
+
+    if (-not (Test-DockerCompose)) {
+        Write-ErrorMsg "Docker Compose 無法使用"
+        return $false
+    }
+
+    Write-Host ""
+    Write-Host "強制重新建立 Docker Compose (--build)..." -ForegroundColor White
+
+    docker compose up -d --build
+
+    if ($LASTEXITCODE -ne 0) {
+        Write-ErrorMsg "Docker Compose 重建失敗"
+        return $false
+    }
+
+    Write-Success "Docker Compose 重建完成"
+
+    Start-Sleep -Seconds 3
+
+    if (-not (Test-PostgresNotExposed)) {
+        return $false
+    }
+
+    Show-DockerStatus
+
+    return $true
+}
+
+# ============================================================
 # Docker 狀態
 # ============================================================
 
@@ -1022,7 +1062,8 @@ function Show-MainMenu {
         Write-Host " [3] 啟動 Docker + 執行 Playwright E2E"
         Write-Host " [4] 查看 Docker 狀態"
         Write-Host " [5] 停止 Docker 伺服器"
-        Write-Host " [6] 查看 Git Status"
+        Write-Host " [6] 重新建立 Docker 伺服器 (Rebuild)"
+        Write-Host " [7] 查看 Git Status"
         Write-Host " [0] 離開"
         Write-Host ""
 
@@ -1060,6 +1101,13 @@ function Show-MainMenu {
             }
 
             "6" {
+                Rebuild-Server
+
+                Write-Host ""
+                Read-Host "按 Enter 返回主選單"
+            }
+
+            "7" {
                 Show-GitStatus
             }
 
