@@ -1196,6 +1196,11 @@ function bindEvents() {
     logoutBtn.addEventListener("click", () => {
       clearToken();
       state = createEmptyState();
+      const loginBtn = document.getElementById("loginBtn");
+      if (loginBtn) {
+        loginBtn.disabled = false;
+        loginBtn.textContent = "登入";
+      }
       renderLoginScreen();
     });
   }
@@ -1220,6 +1225,7 @@ function bindEvents() {
           errorEl.textContent = err.message || "登入失敗，請確認使用者 ID";
           errorEl.style.display = "block";
         }
+      } finally {
         if (loginBtn) { loginBtn.disabled = false; loginBtn.textContent = "登入"; }
       }
     });
