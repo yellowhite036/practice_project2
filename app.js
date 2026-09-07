@@ -562,14 +562,14 @@ function renderWorkOrders() {
       const product = getProduct(order.productId);
       const mold = getMold(order.moldId);
       const statusClass = order.status === "Pending" ? "warn" : order.status === "In_Progress" ? "ok" : order.status === "Completed" ? "ok" : "bad";
-      
+
       const showActions = canWrite();
       let actionHtml = "-";
       if (showActions && (order.status === "Pending" || order.status === "In_Progress")) {
         const inProgress = workOrderActionInProgress.has(order.id);
         const btnDisabled = inProgress ? "disabled" : "";
         const btnText = (originalText) => inProgress ? "處理中..." : originalText;
-        
+
         actionHtml = `<div style="display: flex; gap: 4px;">`;
         if (order.status === "Pending") {
           actionHtml += `<button class="secondary-action wo-action-btn" data-action="start" data-id="${order.id}" style="padding: 4px 8px; font-size: 12px;" ${btnDisabled}>${btnText("開始")}</button>`;
@@ -871,7 +871,7 @@ async function restockMaterials() {
 
 async function releaseScheduledMolds() {
   if (!canWrite()) return;
-  
+
   // 根據警告「模具排程放開需透過工單完成/拒絕 API」，
   // 我們必須找出所有正在佔用模具的活躍工單，並透過 API 將其完成。
   const activeWOs = state.workOrders.filter(wo => wo.status === 'Pending' || wo.status === 'In_Progress');
@@ -1065,6 +1065,116 @@ async function saveStockAdjustment(event) {
 }
 
 // ============================================================
+// QUESTION FEATURE
+// ============================================================
+
+function bindQuestionEvents() {
+  const questionBtn = document.getElementById('questionButton');
+  const questionModal = document.getElementById('questionModal');
+  const questionForm = document.getElementById('questionForm');
+  const questionInput = document.getElementById('questionInput');
+  const questionMessages = document.getElementById('questionMessages');
+  const questionMinimizeBtn = document.getElementById('questionMinimizeBtn');
+
+  if (!questionBtn || !questionModal || !questionForm || !questionInput || !questionMessages) {
+    // 對應 HTML 元素不存在時直接跳過，避免拋出錯誤影響其他功能
+    return;
+  }
+
+  function scrollMessagesToBottom() {
+    questionMessages.scrollTop = questionMessages.scrollHeight;
+  }
+
+  function clearEmptyState() {
+    const empty = questionMessages.querySelector('.question-messages-empty');
+    if (empty) empty.remove();
+  }
+
+  // role: 'user' | 'assistant' | 'pending' | 'error'
+  function appendMessage(role, text) {
+    clearEmptyState();
+    const bubble = document.createElement('div');
+    bubble.className = `question-message ${role}`;
+    bubble.textContent = text;
+    questionMessages.appendChild(bubble);
+    scrollMessagesToBottom();
+    return bubble;
+  }
+
+  // 打開視窗：對話紀錄一律保留（連續對話），只做捲動與聚焦
+  questionBtn.addEventListener('click', () => {
+    questionModal.showModal();
+    scrollMessagesToBottom();
+    questionInput.focus();
+  });
+
+  // 縮小：只關閉視窗，不清空對話內容，之後點擊 ❓ 會恢復原本的對話
+  if (questionMinimizeBtn) {
+    questionMinimizeBtn.addEventListener('click', () => {
+      questionModal.close();
+    });
+  }
+
+  // 點擊 modal 外部時視為「縮小」，同樣保留對話內容
+  questionModal.addEventListener('click', (e) => {
+    if (e.target === questionModal) {
+      questionModal.close();
+    }
+  });
+
+  questionForm.addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const question = questionInput.value.trim();
+    if (!question) {
+      return;
+    }
+
+    appendMessage('user', question);
+    questionInput.value = '';
+    questionInput.style.height = 'auto';
+
+    const pendingBubble = appendMessage('pending', '思考中…');
+    const sendBtn = questionForm.querySelector('.question-send-btn');
+    if (sendBtn) sendBtn.disabled = true;
+
+    try {
+      const response = await fetch('/api/question', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ question }),
+        credentials: 'include',
+      });
+
+      if (!response.ok) {
+        throw new Error(`Server error: ${response.status}`);
+      }
+
+      const data = await response.json();
+      pendingBubble.textContent = data.answer || '無法取得回答';
+      pendingBubble.className = 'question-message assistant';
+    } catch (err) {
+      console.error('Question error:', err);
+      pendingBubble.textContent = '發生錯誤，請稍後再試';
+      pendingBubble.className = 'question-message error';
+    } finally {
+      if (sendBtn) sendBtn.disabled = false;
+      scrollMessagesToBottom();
+      questionInput.focus();
+    }
+  });
+
+  // 按 Enter 送出，Shift+Enter 換行
+  questionInput.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter' && !e.shiftKey) {
+      e.preventDefault();
+      questionForm.requestSubmit();
+    }
+  });
+}
+
+// ============================================================
 // APP INIT
 // ============================================================
 
@@ -1238,6 +1348,7 @@ function bindEvents() {
 
 async function startApp() {
   bindEvents();
+  bindQuestionEvents();
 
   const token = getToken();
   if (token) {

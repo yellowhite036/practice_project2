@@ -9,6 +9,7 @@ const createBomRouter = require("./routes/bom");
 const createWorkOrdersRouter = require("./routes/workOrders");
 const createLogsRouter = require("./routes/logs");
 const createAuthRouter = require("./routes/auth");
+const createQuestionRouter = require("./routes/question");   // ← 新增 1
 
 function createApp(options = {}) {
   const pool = options.pool || defaultPool;
@@ -37,6 +38,7 @@ function createApp(options = {}) {
   app.use("/api/work-orders", createWorkOrdersRouter(pool));
   app.use("/api/logs", createLogsRouter(pool));
   app.use("/api/auth", createAuthRouter(pool));
+  app.use("/api/question", createQuestionRouter(pool));      // ← 新增 2
 
   app.use(notFound);
   app.use(errorHandler);
