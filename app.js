@@ -1138,25 +1138,15 @@ function bindQuestionEvents() {
     if (sendBtn) sendBtn.disabled = true;
 
     try {
-      const response = await fetch('/api/question', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({ question }),
-        credentials: 'include',
-      });
-
-      if (!response.ok) {
-        throw new Error(`Server error: ${response.status}`);
-      }
-
-      const data = await response.json();
+      // 使用專案既有的 apiRequest()：自動帶 JWT、401 時會自動登出導回登入畫面，
+      // 跟其他 API 呼叫（materials、work-orders 等）行為一致。
+      const data = await apiRequest('POST', '/question', { question });
       pendingBubble.textContent = data.answer || '無法取得回答';
       pendingBubble.className = 'question-message assistant';
     } catch (err) {
       console.error('Question error:', err);
-      pendingBubble.textContent = '發生錯誤，請稍後再試';
+      // apiRequest 拋出的 Error 已經是可讀的中文訊息（含 401 認證失敗等情況）
+      pendingBubble.textContent = err.message || '發生錯誤，請稍後再試';
       pendingBubble.className = 'question-message error';
     } finally {
       if (sendBtn) sendBtn.disabled = false;

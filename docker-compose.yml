@@ -38,6 +38,10 @@ services:
       DATABASE_USER: postgres
       DATABASE_PASSWORD: postgres
       JWT_SECRET: supersecret
+      # 容器內的 localhost 指的是容器自己，不是 Windows 主機。
+      # host.docker.internal 是 Docker Desktop（Windows/Mac）提供的
+      # 特殊網域名稱，讓容器可以連回主機上跑的服務（例如本機的 Ollama）。
+      OLLAMA_URL: http://host.docker.internal:11434/api/chat
     ports:
       - "3001:3001"
     depends_on:
