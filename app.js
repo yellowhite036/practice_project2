@@ -1,4 +1,4 @@
-const API_BASE_URL = "/api";
+﻿const API_BASE_URL = "/api";
 
 // ============================================================
 // JWT TOKEN MANAGEMENT
@@ -48,11 +48,17 @@ function createEmptyState() {
     role: "operator",
     activeView: "workorders",
     materials: [],
+    lines: [],
+    lineItemRates: [],
+    itemMoldOptions: [],
     molds: [],
     products: [],
     bomTable: [],
     workOrders: [],
+    autoOrderProposals: [],
+    autoOrderSources: [],
     lastAutomation: null,
+    moldQueues: {},
     logs: [],
     loading: false,
     error: null
@@ -61,15 +67,75 @@ function createEmptyState() {
 
 let state = createEmptyState();
 const workOrderActionInProgress = new Set();
+let autoOrderBusy = false; // prevents double-submit during WO creation
+
+// ============================================================
+// MOLD MANAGEMENT
+// ============================================================
+
+function showMoldModal() {
+  const modal = $("#moldModal");
+  if (!modal) return;
+  modal.style.display = "flex";
+  $("#moldIdInput").value = "";
+  $("#moldNameInput").value = "";
+
+  const productSelect = $("#moldProductInput");
+  if (productSelect) {
+    productSelect.innerHTML = '<option value="">(無)</option>' +
+      state.products.map(p => `<option value="${escapeHtml(p.id)}">${escapeHtml(p.name)} (${escapeHtml(p.id)})</option>`).join("");
+    productSelect.value = "";
+  }
+}
+
+async function saveMold(e) {
+  e.preventDefault();
+  const id = $("#moldIdInput").value.trim();
+  const name = $("#moldNameInput").value.trim();
+  const productId = $("#moldProductInput").value || null;
+
+  if (!id || !name) return;
+
+  try {
+    await apiRequest("POST", "/molds", { mold_id: id, name, product_id: productId, status: "Idle" });
+    addLog("INFO", `已新增模具 ${id} (${name})`);
+    closeModals();
+    await refreshStateFromApi();
+  } catch (error) {
+    addLog("ERR", `新增模具失敗: ${error.message}`);
+  }
+}
+
+async function deleteMold(id) {
+  if (!confirm(`確定要刪除模具 ${id} 嗎？`)) return;
+  try {
+    await apiRequest("DELETE", `/molds/${id}`);
+    addLog("INFO", `已刪除模具 ${id}`);
+    await refreshStateFromApi();
+  } catch (error) {
+    addLog("ERR", `刪除模具失敗: ${error.message}`);
+  }
+}
 
 // ============================================================
 // CONSTANTS / UI HELPERS
 // ============================================================
 
+function escapeHtml(unsafe) {
+  if (!unsafe) return "";
+  return String(unsafe)
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#039;");
+}
+
 const viewTitles = {
   workorders: "工單派發",
   materials: "物料庫存",
-  molds: "模具狀態",
+  autoorders: "自動下單",
+  molds: "產線與模具管理",
   products: "產品 BOM",
   logs: "系統紀錄"
 };
@@ -206,9 +272,15 @@ function mapMold(row) {
     line: row.line || "-",
     eta: row.eta || "-",
     productId: row.product_id || "",
+    code: row.code || "",
+    isActive: row.is_active !== false,
     version: row.version || 1
   };
 }
+
+function mapLine(row) { return { id: Number(row.id), name: row.name, isActive: row.is_active !== false, createdAt: row.created_at }; }
+function mapLineRate(row) { return { lineId: Number(row.line_id), productId: row.product_id, unitsPerHour: Number(row.units_per_hour) }; }
+function mapItemMoldOption(row) { return { productId: row.product_id, moldId: row.mold_id, preferred: Boolean(row.is_preferred) }; }
 
 function mapBom(row) {
   return {
@@ -251,20 +323,26 @@ async function fetchBackendState() {
     apiRequest("GET", "/products"),
     apiRequest("GET", "/molds"),
     apiRequest("GET", "/bom"),
-    apiRequest("GET", "/work-orders")
+    apiRequest("GET", "/work-orders"),
+    apiRequest("GET", "/lines")
   ];
   if (canReadLogs) {
     requests.push(apiRequest("GET", "/logs"));
   }
   const results = await Promise.all(requests);
-  const [materials, products, molds, bomTable, workOrders] = results;
-  const logs = canReadLogs ? results[5] : [];
+  const [materials, products, molds, bomTable, workOrders, lines] = results;
+  const logs = canReadLogs ? results[6] : [];
+  const rateGroups = await Promise.all(lines.map(line => apiRequest("GET", `/lines/${line.id}/rates`)));
+  const moldOptionGroups = await Promise.all(products.map(product => apiRequest("GET", `/items/${encodeURIComponent(product.product_id)}/molds`)));
   return {
     materials: materials.map(mapMaterial),
     products: products.map(mapProduct),
     molds: molds.map(mapMold),
     bomTable: bomTable.map(mapBom),
     workOrders: workOrders.map(mapWorkOrder),
+    lines: lines.map(mapLine),
+    lineItemRates: rateGroups.flat().map(mapLineRate),
+    itemMoldOptions: moldOptionGroups.flat().map(mapItemMoldOption),
     logs: logs.map(mapLog)
   };
 }
@@ -381,15 +459,25 @@ function render() {
   renderNavigation();
   renderMetrics();
   renderMaterialOptions();
+  renderLineOptions();
   renderMoldOptions();
   renderCombinedProduct();
   renderPreview();
   renderAutomationSteps(state.lastAutomation);
   renderWorkOrders();
   renderMaterials();
+  renderAutoOrders();
+  renderProductionManagement();
   renderMolds();
   renderProducts();
   renderLogs();
+}
+
+// Like render() but preserves scroll position — used during background production
+function renderQuiet() {
+  const sy = window.scrollY;
+  render();
+  window.scrollTo({ top: sy, behavior: "instant" });
 }
 
 function renderRole() {
@@ -411,7 +499,7 @@ function renderRole() {
     button.title = hasAccess ? "" : "此操作需主管或管理員";
   });
 
-  if (!canWrite() && state.activeView === "logs" && state.role === "operator") {
+  if (!canWrite() && ["logs", "autoorders"].includes(state.activeView) && state.role === "operator") {
     state.activeView = "workorders";
   }
 }
@@ -468,6 +556,53 @@ function renderMoldOptions() {
     .map((mold) => `<option value="${mold.id}">${mold.name} (${translateMoldStatus(mold.status)})</option>`)
     .join("");
   select.value = state.molds.some((mold) => mold.id === currentValue) ? currentValue : state.molds[0].id;
+}
+
+function renderLineOptions() {
+  const select = $("#lineSelect");
+  if (!select) return;
+  const current = select.value;
+  select.innerHTML = state.lines.map(line => `<option value="${escapeHtml(line.name)}">${escapeHtml(line.name)}</option>`).join("");
+  select.value = state.lines.some(line => line.name === current) ? current : (state.lines[0]?.name || "");
+}
+
+function renderProductionManagement() {
+  const container = $("#productionManagement");
+  if (!container) return;
+  const productOptions = state.products.map(product => `<option value="${escapeHtml(product.id)}">${escapeHtml(product.name)} (${escapeHtml(product.id)})</option>`).join("");
+  const lines = state.lines.map(line => {
+    const count = state.lineItemRates.filter(rate => rate.lineId === line.id).length;
+    return `<li><strong>${escapeHtml(line.name)}</strong> · ${line.isActive ? "啟用" : "停用"} · ${count} 個品項能力
+      <button type="button" class="toggle-line-btn secondary-action" data-id="${line.id}" data-active="${line.isActive}">${line.isActive ? "停用" : "啟用"}</button></li>`;
+  }).join("") || "<li>尚無產線</li>";
+  container.innerHTML = `<div class="panel-heading"><div><p class="eyebrow">Database-managed resources</p><h4>產線能力設定</h4></div></div>
+    <form id="addLineForm" class="form-grid"><label>新增產線<input id="newLineName" maxlength="100" placeholder="例如 L4" required></label><button class="primary-action" type="submit">新增產線</button></form>
+    <ul>${lines}</ul>
+    <form id="lineRateForm" class="form-grid"><label>產線<select id="rateLineId">${state.lines.filter(line => line.isActive).map(line => `<option value="${line.id}">${escapeHtml(line.name)}</option>`).join("")}</select></label><label>品項<select id="rateProductId">${productOptions}</select></label><label>每小時產量<input id="rateUnits" type="number" min="0.001" step="0.001" required></label><button class="primary-action" type="submit">儲存能力</button></form>
+    <form id="itemMoldForm" class="form-grid"><label>品項<select id="itemMoldProduct">${productOptions}</select></label><label>可用模具（可複選）<select id="itemMoldIds" multiple size="3">${state.molds.filter(mold => mold.isActive).map(mold => `<option value="${escapeHtml(mold.id)}">${escapeHtml(mold.name)} (${escapeHtml(mold.id)})</option>`).join("")}</select></label><label>優先模具<select id="preferredMoldId"><option value="">無</option>${state.molds.filter(mold => mold.isActive).map(mold => `<option value="${escapeHtml(mold.id)}">${escapeHtml(mold.name)}</option>`).join("")}</select></label><button class="primary-action" type="submit">儲存模具對應</button></form>`;
+}
+
+async function saveLine(event) {
+  event.preventDefault();
+  const name = $("#newLineName").value.trim();
+  try { await apiRequest("POST", "/lines", { name }); await refreshStateFromApi(); render(); }
+  catch (error) { addLog("ERR", `新增產線失敗: ${error.message}`); render(); }
+}
+
+async function saveLineRate(event) {
+  event.preventDefault();
+  const lineId = $("#rateLineId").value; const productId = $("#rateProductId").value; const units = Number($("#rateUnits").value);
+  try { await apiRequest("PUT", `/lines/${lineId}/rates/${encodeURIComponent(productId)}`, { units_per_hour: units }); await refreshStateFromApi(); render(); }
+  catch (error) { addLog("ERR", `儲存產線能力失敗: ${error.message}`); render(); }
+}
+
+async function saveItemMolds(event) {
+  event.preventDefault();
+  const productId = $("#itemMoldProduct").value;
+  const moldIds = [...$("#itemMoldIds").selectedOptions].map(option => option.value);
+  const preferred = $("#preferredMoldId").value || null;
+  try { await apiRequest("PUT", `/items/${encodeURIComponent(productId)}/molds`, { mold_ids: moldIds, preferred_mold_id: preferred }); await refreshStateFromApi(); render(); }
+  catch (error) { addLog("ERR", `儲存品項模具對應失敗: ${error.message}`); render(); }
 }
 
 function getDerivedProduct() {
@@ -654,7 +789,10 @@ function renderMolds() {
           </div>
           <p>產線位置：${mold.line}</p>
           <p>預計放開：${mold.eta}</p>
-          ${locked && canWrite() ? `<div style="margin-top: 12px; text-align: right;"><button class="secondary-action manual-release-mold-btn" data-id="${mold.id}" type="button">手動釋放</button></div>` : ""}
+          <div style="margin-top: 12px; display: flex; justify-content: flex-end; gap: 8px;">
+            ${locked && canWrite() ? `<button class="secondary-action manual-release-mold-btn" data-id="${mold.id}" type="button">手動釋放</button>` : ""}
+            ${canWrite() && !locked ? `<button class="danger-action delete-mold-btn admin-only" data-id="${mold.id}" type="button">刪除</button>` : ""}
+          </div>
         </article>
       `;
     })
@@ -868,6 +1006,446 @@ async function restockMaterials() {
   addLog("INFO", `一鍵補料完成：成功 ${successCount} 項，失敗 ${failCount} 項`);
   render();
 }
+
+function escapeHtml(value) {
+  return String(value).replace(/[&<>'"]/g, char => ({
+    "&": "&amp;", "<": "&lt;", ">": "&gt;", "'": "&#39;", '"': "&quot;"
+  })[char]);
+}
+
+function renderAutoOrders() {
+  const container = $("#autoOrderSuggestions");
+  const confirmButton = $("#confirmAutoOrderButton");
+  if (!container || !confirmButton) return;
+
+  // 更新每一個多產品行的 select 選項
+  const rowSelects = document.querySelectorAll('.auto-order-row-product');
+  rowSelects.forEach(sel => {
+    const selectedVal = sel.value;
+    sel.innerHTML = state.products.map(product =>
+      '<option value="' + escapeHtml(product.id) + '">' + escapeHtml(product.name) + ' (' + escapeHtml(product.id) + ')</option>'
+    ).join("");
+    if (selectedVal && getProduct(selectedVal)) sel.value = selectedVal;
+  });
+
+  const proposals = state.autoOrderProposals || [];
+  if (proposals.length === 0) {
+    container.innerHTML = '<p class="auto-order-empty">輸入產品與訂單數量後，按「產生最佳排程」。</p>';
+    if (!autoOrderBusy) confirmButton.disabled = true;
+  } else {
+    container.innerHTML = proposals.map((item, index) => {
+      return '<label class="auto-order-item">' +
+        '<input type="checkbox" name="proposalIndex" value="' + index + '" checked>' +
+        '<span><strong>' + escapeHtml(item.product_name) + '</strong> <small>' + escapeHtml(item.product_id) + '</small><br>' +
+        '<span class="auto-order-detail">建議生產 ' + formatAmount(item.quantity) + ' 件｜產線 ' + escapeHtml(item.line) +
+        '｜模具 ' + escapeHtml(item.mold_id) + '。依據：' + escapeHtml(item.reason || "資料庫分析結果") + '</span></span></label>';
+    }).join("");
+    if (!autoOrderBusy) {
+      confirmButton.disabled = false;
+      confirmButton.textContent = "建立工單並自動生產";
+    }
+  }
+}
+
+async function analyzeAutoOrders() {
+  const result = $("#autoOrderResult");
+  if (result) result.textContent = "";
+
+  // 讀取所有多產品行
+  const rows = document.querySelectorAll('.auto-order-row');
+  const orderItems = [];
+  for (const row of rows) {
+    const productId = row.querySelector('.auto-order-row-product')?.value;
+    const qty = Number(row.querySelector('.auto-order-row-qty')?.value || 0);
+    const dueDate = row.querySelector('.auto-order-row-due')?.value || "9999-12-31";
+    const product = getProduct(productId);
+    if (!product || !Number.isInteger(qty) || qty <= 0) continue;
+    orderItems.push({ product, quantity: qty, dueDate });
+  }
+
+  if (orderItems.length === 0) {
+    if (result) result.textContent = "請至少輸入一個有效的產品與下單數量。";
+    return;
+  }
+
+  // 根據 EDD (Earliest Due Date) + ECT (Earliest Completion Time) 進行最佳排程排序
+  orderItems.sort((a, b) => {
+    // 1. EDD：交期越早越優先
+    if (a.dueDate !== b.dueDate) {
+      return a.dueDate.localeCompare(b.dueDate);
+    }
+    // 2. ECT：若交期相同，預估完成時間 (數量 * 材質速度) 越短越優先 (Shortest Job First)
+    const ectA = a.quantity * getMaterialSpeedMs(a.product.id);
+    const ectB = b.quantity * getMaterialSpeedMs(b.product.id);
+    return ectA - ectB;
+  });
+
+  state.autoOrderProposals = [];
+  const summaryParts = [];
+
+  for (const { product, quantity } of orderItems) {
+    const capableLines = state.lines.filter(line => line.isActive && state.lineItemRates.some(rate => rate.lineId === line.id && rate.productId === product.id && rate.unitsPerHour > 0));
+    const optionMoldIds = state.itemMoldOptions.filter(option => option.productId === product.id).map(option => option.moldId);
+    const candidateMolds = state.molds.filter(mold => mold.isActive && (mold.status === "Idle" || mold.status === "In_Use") && optionMoldIds.includes(mold.id)).slice(0, 10);
+
+    if (candidateMolds.length === 0 || capableLines.length === 0) {
+      summaryParts.push(`【${product.name}】${candidateMolds.length ? "沒有具備生產能力的啟用產線" : "找不到已啟用的可用模具"}，已略過。`);
+      continue;
+    }
+
+    const slots = Math.min(candidateMolds.length, capableLines.length);
+    const base = Math.floor(quantity / slots);
+    const remainder = quantity % slots;
+
+    const proposals = candidateMolds.slice(0, slots).map((mold, index) => {
+      const assignedQuantity = base + (index < remainder ? 1 : 0);
+      const line = capableLines[index];
+      const rate = state.lineItemRates.find(item => item.lineId === line.id && item.productId === product.id)?.unitsPerHour;
+      const moldStatusLabel = mold.status === "In_Use" ? "（使用中，將排隊等待）" : "";
+      return {
+        product_id: product.id, product_name: product.name, quantity: assignedQuantity,
+        line: line.name, mold_id: mold.id,
+        reason: `訂單 ${quantity} 件，使用 ${slots} 組產線／模具分配${moldStatusLabel}；${line.name} 速率 ${formatAmount(rate)} 件/小時`
+      };
+    }).filter(proposal => proposal.quantity > 0);
+
+    state.autoOrderProposals.push(...proposals);
+    summaryParts.push(`【${product.name}】${quantity} 件 → ${proposals.length} 條產線`);
+  }
+
+  if (result) result.textContent = summaryParts.length > 0
+    ? summaryParts.join('；')
+    : "沒有可用的排程結果。";
+  renderAutoOrders();
+}
+
+// ============================================================
+// AUTO PRODUCTION SIMULATION
+// 速度依材質決定：塑膠=1s、鐵=2s、木頭=3s、玻璃=4s
+// ============================================================
+
+/**
+ * 依產品的 BOM 材料名稱判斷主要材質，回傳每單位生產的毫秒數。
+ * 規則：塑膠→1000ms、鐵→2000ms、木頭→3000ms、玻璃→4000ms，其餘預設1000ms。
+ */
+function getMaterialSpeedMs(productId) {
+  const bomRows = getBomForProduct(productId);
+  // 依最大用量的材料決定主材質
+  let dominant = null;
+  let maxAmount = -1;
+  for (const row of bomRows) {
+    if (row.amountPerUnit > maxAmount) {
+      maxAmount = row.amountPerUnit;
+      dominant = row.name || row.materialId;
+    }
+  }
+  if (!dominant) return 1000; // 預設
+  const n = dominant.toLowerCase();
+  if (n.includes('塑膠') || n.includes('plastic')) return 1000;
+  if (n.includes('鐵') || n.includes('iron') || n.includes('steel') || n.includes('metal')) return 2000;
+  if (n.includes('木') || n.includes('wood')) return 3000;
+  if (n.includes('玻璃') || n.includes('glass')) return 4000;
+  return 1000; // 未知材質預設 1 秒
+}
+
+// 模擬生產進度：依材質速度 +1，直到 quantity，完成後 complete 工單
+async function simulateProduction(workOrderId, productName, quantity, productId) {
+  const progressArea = $("#autoProductionProgress");
+  const list = $("#autoProductionList");
+  if (!progressArea || !list) return;
+  progressArea.style.display = "block";
+
+  // 建立此工單的進度條元素
+  const itemId = "prod-item-" + workOrderId;
+  const item = document.createElement("div");
+  item.id = itemId;
+  item.style.cssText = "background:var(--surface-2,rgba(255,255,255,0.04)); border-radius:8px; padding:10px 14px; display:flex; flex-direction:column; gap:6px;";
+  item.innerHTML = `
+    <div style="display:flex; justify-content:space-between; align-items:center;">
+      <span><strong>${escapeHtml(productName)}</strong> <code style="font-size:12px;">${escapeHtml(workOrderId)}</code></span>
+      <span class="status-pill ok" id="pill-${escapeHtml(workOrderId)}">生產中</span>
+    </div>
+    <div style="display:flex; align-items:center; gap:8px;">
+      <div style="flex:1; height:8px; background:rgba(255,255,255,0.1); border-radius:4px; overflow:hidden;">
+        <div id="bar-${escapeHtml(workOrderId)}" style="height:100%; width:0%; background:var(--accent,#7c6ef2); border-radius:4px; transition:width 0.3s;"></div>
+      </div>
+      <span id="cnt-${escapeHtml(workOrderId)}" style="font-size:12px; min-width:80px; text-align:right;">0 / ${quantity}</span>
+    </div>
+  `;
+  list.prepend(item);
+
+  let produced = 0;
+  await new Promise(resolve => {
+    const timer = setInterval(() => {
+      produced = Math.min(produced + 1, quantity);
+      const bar = document.getElementById("bar-" + workOrderId);
+      const cnt = document.getElementById("cnt-" + workOrderId);
+      if (bar) bar.style.width = ((produced / quantity) * 100).toFixed(1) + "%";
+      if (cnt) cnt.textContent = produced + " / " + quantity;
+      if (produced >= quantity) {
+        clearInterval(timer);
+        resolve();
+      }
+    }, getMaterialSpeedMs(productId));
+  });
+
+  // 完成：更新 UI 狀態
+  const pill = document.getElementById("pill-" + workOrderId);
+  if (pill) { pill.textContent = "完成"; pill.classList.remove("ok"); pill.classList.add("ok"); }
+  item.style.opacity = "0.6";
+
+  // 呼叫 complete API
+  try {
+    await apiRequest("PUT", `/work-orders/${workOrderId}`, { action: "complete" });
+    addLog("INFO", `工單 ${workOrderId} (${productName}) 自動生產完成`);
+  } catch (err) {
+    addLog("ERR", `工單 ${workOrderId} 完成失敗: ${err.message}`);
+  }
+}
+
+async function saveAutoOrders(event) {
+  event.preventDefault();
+  const result = $("#autoOrderResult");
+  if (!canWrite()) {
+    if (result) result.textContent = "建立採購單需要主管或管理員權限。";
+    return;
+  }
+  if (autoOrderBusy) {
+    if (result) result.textContent = "正在建立工單中，請稍候…";
+    return;
+  }
+
+  const selectedIndexes = [...document.querySelectorAll('#autoOrderSuggestions input[name="proposalIndex"]:checked')].map(input => Number(input.value));
+  if (selectedIndexes.length === 0) {
+    if (result) result.textContent = "請至少勾選一項工單建議。";
+    return;
+  }
+  const user = getStoredUser();
+  const selected = selectedIndexes.map(index => state.autoOrderProposals[index]).filter(Boolean);
+  if (selected.length === 0) {
+    if (result) result.textContent = "沒有有效的排程建議，請重新產生排程。";
+    return;
+  }
+
+  autoOrderBusy = true;
+  const confirmBtn = $("#confirmAutoOrderButton");
+  if (confirmBtn) { confirmBtn.disabled = true; confirmBtn.textContent = "建立中…"; }
+
+  // ── 步驟 0：自動補料 ──
+  if (result) result.textContent = "檢查物料庫存…";
+  const materialNeeds = new Map();
+  for (const proposal of selected) {
+    const bomRows = getBomForProduct(proposal.product_id);
+    for (const row of bomRows) {
+      const prev = materialNeeds.get(row.materialId) || 0;
+      materialNeeds.set(row.materialId, prev + row.amountPerUnit * proposal.quantity);
+    }
+  }
+  const toRestock = [];
+  for (const [materialId, required] of materialNeeds) {
+    const mat = getMaterial(materialId);
+    if (!mat) continue;
+    if (mat.stock < required) {
+      const targetStock = Math.max(mat.capacity > 0 ? mat.capacity : 0, Math.ceil(required));
+      toRestock.push({ mat, targetStock });
+    }
+  }
+  if (toRestock.length > 0) {
+    if (result) result.textContent = `物料不足，自動補料中（${toRestock.map(r => r.mat.name).join("、")})…`;
+    for (const { mat, targetStock } of toRestock) {
+      try {
+        await apiRequest("PUT", `/materials/${encodeURIComponent(mat.id)}`, toApiMaterial({ ...mat, stock: targetStock }));
+        addLog("INFO", `自動補料：${mat.name} 庫存補至 ${formatAmount(targetStock)} ${mat.unit}`);
+      } catch (err) {
+        addLog("ERR", `自動補料失敗 ${mat.name}：${err.message}`);
+      }
+    }
+    await refreshStateFromApi();
+  }
+
+  // ── 步驟 1：立即建立所有工單 ──
+  if (result) result.textContent = "建立工單中，請稍候…";
+  const created = [];
+  const failed = [];
+  for (const proposal of selected) {
+    try {
+      const workOrder = await apiRequest("POST", "/work-orders", {
+        product_id: proposal.product_id, quantity: proposal.quantity, line: proposal.line,
+        mold_id: proposal.mold_id, creator_user_id: user?.user_id || null, creator_name: user?.user_id || null
+      });
+      created.push({ workOrderId: workOrder.work_order_id, productName: proposal.product_name, quantity: proposal.quantity, moldId: proposal.mold_id, productId: proposal.product_id });
+      addLog("INFO", `工單 ${workOrder.work_order_id} 已建立並排入佇列（${proposal.product_name} × ${proposal.quantity}）`);
+    } catch (error) {
+      failed.push(proposal.product_name + "：" + error.message);
+      addLog("ERR", `工單建立失敗 ${proposal.product_name}: ${error.message}`);
+    }
+  }
+
+  // Refresh so kanban shows the new Pending work orders
+  await refreshStateFromApi();
+  renderQuiet();
+
+  autoOrderBusy = false;
+  if (confirmBtn) { confirmBtn.disabled = false; confirmBtn.textContent = "建立工單並自動生產"; }
+  if (result) result.textContent = `已建立 ${created.length} 張工單並排入生產佇列！${failed.length ? "；失敗：" + failed.join("；") : ""}`;
+
+  // ── 步驟 2：依模具推入全域佇列，自動排隊執行 ──
+  for (const { workOrderId, productName, quantity, moldId, productId } of created) {
+    enqueueMoldTask(moldId, { workOrderId, productName, quantity, productId });
+  }
+}
+
+
+// ============================================================
+// GLOBAL PER-MOLD PRODUCTION QUEUE
+// Persists across multiple saveAutoOrders() calls.
+// ============================================================
+
+const moldQueues = new Map();
+
+function enqueueMoldTask(moldId, task) {
+  if (!moldQueues.has(moldId)) {
+    moldQueues.set(moldId, { queue: [], running: false, currentTask: null });
+  }
+  moldQueues.get(moldId).queue.push(task);
+  renderQueuePanel();
+  runMoldQueue(moldId);
+}
+
+async function runMoldQueue(moldId) {
+  const qs = moldQueues.get(moldId);
+  if (!qs || qs.running) return;
+  qs.running = true;
+  console.log(`[Queue] 模具 ${moldId} 佇列開始，共 ${qs.queue.length} 張`);
+
+  while (qs.queue.length > 0) {
+    const task = qs.queue.shift();
+    qs.currentTask = task;
+    renderQueuePanel();
+    updateMoldQueueBadge(moldId, qs.queue.length);
+    console.log(`[Queue] 開始處理工單 ${task.workOrderId} (${task.productName})`);
+    try {
+      // 1. Start work order (backend locks the mold here)
+      console.log(`[Queue] PUT start ${task.workOrderId}`);
+      await apiRequest("PUT", `/work-orders/${task.workOrderId}`, { action: "start" });
+      addLog("INFO", `工單 ${task.workOrderId} 開始生產（${task.productName}）`);
+      await refreshStateFromApi();
+      renderQuiet();
+
+      // 2. Simulate production (speed depends on material type) then complete
+      const speedMs = getMaterialSpeedMs(task.productId);
+      console.log(`[Queue] simulateProduction ${task.workOrderId} qty=${task.quantity} speed=${speedMs}ms/unit`);
+      await simulateProduction(task.workOrderId, task.productName, task.quantity, task.productId);
+
+      await refreshStateFromApi();
+      renderQuiet();
+    } catch (err) {
+      console.error(`[Queue] 工單 ${task.workOrderId} 失敗:`, err);
+      addLog("ERR", `工單 ${task.workOrderId} 執行失敗: ${err.message}`);
+    }
+    qs.currentTask = null;
+    renderQueuePanel();
+    updateMoldQueueBadge(moldId, qs.queue.length);
+  }
+
+  qs.running = false;
+  renderQueuePanel();
+}
+
+function updateMoldQueueBadge(moldId, remaining) {
+  // Show remaining queue count in the progress area
+  const badge = document.getElementById(`mold-queue-${moldId}`);
+  if (badge) {
+    badge.textContent = remaining > 0 ? `模具 ${moldId} 排隊中：${remaining} 張` : "";
+    badge.style.display = remaining > 0 ? "block" : "none";
+  }
+}
+
+function renderQueuePanel() {
+  const panel = document.getElementById("queueStatusPanel");
+  if (!panel) return;
+
+  // Check if anything is happening at all
+  let totalActive = 0;
+  for (const [, qs] of moldQueues) {
+    if (qs.currentTask || qs.queue.length > 0) totalActive++;
+  }
+
+  if (totalActive === 0) {
+    panel.innerHTML = `<p style="color:var(--muted);font-size:13px;margin:0;">目前沒有排程執行中。</p>`;
+    return;
+  }
+
+  let html = "";
+  for (const [moldId, qs] of moldQueues) {
+    if (!qs.currentTask && qs.queue.length === 0) continue;
+
+    const moldName = (state.molds.find(m => m.id === moldId) || {}).name || moldId;
+
+    html += `<div class="queue-mold-group" style="margin-bottom:12px; padding:10px; background:rgba(255,255,255,0.02); border:1px solid rgba(255,255,255,0.1); border-radius:8px;">
+      <div class="queue-mold-header" style="margin-bottom:8px;">
+        <span class="queue-mold-icon">⚙️</span>
+        <strong>${escapeHtml(moldName)}</strong>
+        <span class="queue-count-badge" style="margin-left:8px; font-size:12px; color:var(--muted);">共 ${(qs.queue.length + (qs.currentTask ? 1 : 0))} 張</span>
+      </div>`;
+
+    // Currently running task
+    if (qs.currentTask) {
+      const t = qs.currentTask;
+      const barEl = document.getElementById(`bar-${t.workOrderId}`);
+      const cntEl = document.getElementById(`cnt-${t.workOrderId}`);
+      const produced = cntEl ? parseInt(cntEl.textContent) : 0;
+      const pct = t.quantity > 0 ? Math.round((produced / t.quantity) * 100) : 0;
+      html += `<div class="queue-task running" style="margin-bottom:6px; padding-left:12px; border-left:2px solid var(--ok);">
+        <div class="queue-task-header">
+          <span class="queue-status-dot running" style="color:var(--ok);">●</span>
+          <span class="queue-task-name">${escapeHtml(t.productName)}</span>
+          <code class="queue-task-id" style="font-size:11px; margin-left:6px; color:var(--muted);">${escapeHtml(t.workOrderId)}</code>
+          <span class="queue-task-tag running" style="font-size:11px; color:var(--ok); margin-left:8px;">生產中</span>
+        </div>
+        <div class="queue-bar-wrap" style="margin-top:4px;">
+          <div class="queue-bar-track" style="width:100%; height:4px; background:rgba(255,255,255,0.1); border-radius:2px; overflow:hidden;">
+            <div class="queue-bar-fill" id="qbar-${t.workOrderId}" style="width:${pct}%; height:100%; background:var(--ok); transition:width 1s linear;"></div>
+          </div>
+          <span class="queue-bar-label" id="qcnt-${t.workOrderId}" style="font-size:11px; color:var(--muted);">${produced} / ${t.quantity} 件</span>
+        </div>
+      </div>`;
+    }
+
+    // Waiting tasks
+    qs.queue.forEach((t, idx) => {
+      html += `<div class="queue-task waiting" style="margin-bottom:6px; padding-left:12px; border-left:2px solid var(--muted);">
+        <div class="queue-task-header">
+          <span class="queue-status-dot waiting" style="color:var(--muted);">●</span>
+          <span class="queue-task-name">${escapeHtml(t.productName)}</span>
+          <code class="queue-task-id" style="font-size:11px; margin-left:6px; color:var(--muted);">${escapeHtml(t.workOrderId)}</code>
+          <span class="queue-task-tag waiting" style="font-size:11px; color:var(--warn); margin-left:8px;">等待中 #${idx + 1}</span>
+        </div>
+        <div style="font-size:12px;color:var(--muted);padding-left:14px;">${t.quantity} 件待生產</div>
+      </div>`;
+    });
+
+    html += `</div>`;
+  }
+
+  panel.innerHTML = html;
+
+  // Sync progress bars from simulateProduction's live DOM elements
+  for (const [, qs] of moldQueues) {
+    if (!qs.currentTask) continue;
+    const t = qs.currentTask;
+    const srcBar = document.getElementById(`bar-${t.workOrderId}`);
+    const srcCnt = document.getElementById(`cnt-${t.workOrderId}`);
+    const dstBar = document.getElementById(`qbar-${t.workOrderId}`);
+    const dstCnt = document.getElementById(`qcnt-${t.workOrderId}`);
+    if (srcBar && dstBar) dstBar.style.width = srcBar.style.width;
+    if (srcCnt && dstCnt) dstCnt.textContent = srcCnt.textContent;
+  }
+}
+
+// Keep the queue panel in sync with simulateProduction every second
+setInterval(renderQueuePanel, 1000);
+
 
 async function releaseScheduledMolds() {
   if (!canWrite()) return;
@@ -1222,8 +1800,85 @@ function bindEvents() {
   const restockBtn = $("#restockButton");
   if (restockBtn) restockBtn.addEventListener("click", restockMaterials);
 
+  const autoOrderForm = $("#autoOrderForm");
+  if (autoOrderForm) autoOrderForm.addEventListener("submit", saveAutoOrders);
+  const analyzeAutoOrderButton = $("#analyzeAutoOrderButton");
+  if (analyzeAutoOrderButton) analyzeAutoOrderButton.addEventListener("click", analyzeAutoOrders);
+
+  // ── 多產品行管理 ──
+  const addRowBtn = $("#addAutoOrderRowBtn");
+  if (addRowBtn) {
+    addRowBtn.addEventListener("click", () => {
+      const container = $("#autoOrderRowsContainer");
+      if (!container) return;
+      const rowCount = container.querySelectorAll('.auto-order-row').length;
+      const newRow = document.createElement("div");
+      newRow.className = "auto-order-row";
+      newRow.dataset.row = rowCount;
+      newRow.style.cssText = "display:flex; align-items:center; gap:10px; background:var(--surface-2,rgba(255,255,255,0.04)); border-radius:8px; padding:10px 14px;";
+      const productOptions = state.products.map(p =>
+        '<option value="' + escapeHtml(p.id) + '">' + escapeHtml(p.name) + ' (' + escapeHtml(p.id) + ')</option>'
+      ).join("");
+      newRow.innerHTML = `
+        <label style="flex:2; margin:0;">訂單產品
+          <select class="auto-order-row-product" name="autoOrderProduct[]" required>${productOptions}</select>
+        </label>
+        <label style="flex:1; margin:0;">下單數量
+          <input class="auto-order-row-qty" name="autoOrderQuantity[]" type="number" min="1" step="1" placeholder="例如 5000" required>
+        </label>
+        <label style="flex:1; margin:0;">交期 (EDD)
+          <input class="auto-order-row-due" name="autoOrderDue[]" type="date" required>
+        </label>
+        <button type="button" class="remove-auto-order-row danger-action" style="margin-top:20px; padding:4px 10px; font-size:13px;" aria-label="刪除此行">✕</button>
+      `;
+      container.appendChild(newRow);
+      // 顯示所有刪除鈕（超過 1 行時）
+      container.querySelectorAll('.remove-auto-order-row').forEach(btn => btn.style.display = "");
+    });
+  }
+
+  // 刪除行（事件委派）
+  const rowsContainer = $("#autoOrderRowsContainer");
+  if (rowsContainer) {
+    rowsContainer.addEventListener("click", (e) => {
+      if (e.target.classList.contains("remove-auto-order-row")) {
+        const row = e.target.closest(".auto-order-row");
+        if (row) row.remove();
+        // 只剩 1 行時隱藏刪除鈕
+        const remaining = rowsContainer.querySelectorAll('.auto-order-row');
+        if (remaining.length === 1) {
+          remaining[0].querySelector('.remove-auto-order-row').style.display = "none";
+        }
+      }
+    });
+  }
+
   const releaseMoldsBtn = $("#releaseMoldsButton");
   if (releaseMoldsBtn) releaseMoldsBtn.addEventListener("click", releaseScheduledMolds);
+
+  const productionManagement = $("#productionManagement");
+  if (productionManagement) {
+    productionManagement.addEventListener("submit", (event) => {
+      if (event.target.id === "addLineForm") saveLine(event);
+      if (event.target.id === "lineRateForm") saveLineRate(event);
+      if (event.target.id === "itemMoldForm") saveItemMolds(event);
+    });
+    productionManagement.addEventListener("click", async (event) => {
+      const button = event.target.closest(".toggle-line-btn");
+      if (!button) return;
+      try {
+        await apiRequest("PATCH", `/lines/${button.dataset.id}`, { is_active: button.dataset.active !== "true" });
+        await refreshStateFromApi(); render();
+      } catch (error) { addLog("ERR", `更新產線狀態失敗: ${error.message}`); render(); }
+    });
+  }
+
+  // 模具管理 (新增 / 刪除)
+  const addMoldBtn = $("#addMoldButton");
+  if (addMoldBtn) addMoldBtn.addEventListener("click", showMoldModal);
+
+  const moldForm = $("#moldForm");
+  if (moldForm) moldForm.addEventListener("submit", saveMold);
 
   const resetBtn = $("#resetButton");
   if (resetBtn) resetBtn.addEventListener("click", resetState);
@@ -1279,6 +1934,8 @@ function bindEvents() {
           addLog("ERR", `手動釋放失敗: ${err.message}`);
           render();
         }
+      } else if (e.target.classList.contains("delete-mold-btn")) {
+        deleteMold(e.target.dataset.id);
       }
     });
   }

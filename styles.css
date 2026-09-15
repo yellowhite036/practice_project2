@@ -1,4 +1,4 @@
-:root {
+﻿:root {
   color-scheme: light;
   --bg: #f4f7f5;
   --surface: #ffffff;
@@ -594,6 +594,57 @@ dialog::backdrop {
   margin-top: 24px;
 }
 
+.auto-order-note,
+.auto-order-empty {
+  color: var(--muted);
+  font-size: 14px;
+  line-height: 1.6;
+  margin: 10px 0 0;
+}
+
+.auto-order-suggestions {
+  display: grid;
+  gap: 10px;
+  margin-top: 18px;
+}
+
+.auto-order-item {
+  align-items: flex-start;
+  background: #f9fbfa;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  cursor: pointer;
+  display: flex;
+  gap: 10px;
+  padding: 12px;
+}
+
+.auto-order-item.unavailable {
+  cursor: not-allowed;
+  opacity: .65;
+}
+
+.auto-order-item input { margin-top: 4px; }
+
+.auto-order-detail {
+  color: var(--muted);
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+.auto-order-result {
+  background: #e7f5ec;
+  border-radius: 7px;
+  color: #17633a;
+  font-weight: 700;
+  margin: 16px 0 0;
+  padding: 10px 12px;
+}
+
+.auto-order-result:empty {
+  display: none;
+}
+
 /* Card Actions */
 .card-actions {
   display: flex;
@@ -643,4 +694,34 @@ dialog::backdrop {
   padding: 10px 14px;
   font-size: 13px;
   color: var(--warning);
+}
+
+/* ── Multi-product order rows ── */
+.auto-order-row label {
+  display: flex;
+  flex-direction: column;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--muted);
+  gap: 4px;
+}
+
+.auto-order-row label select,
+.auto-order-row label input {
+  margin-top: 4px;
+}
+
+/* ── Production progress bar ── */
+#autoProductionProgress {
+  border-top: 1px solid var(--line);
+  padding-top: 14px;
+}
+
+#autoProductionList > div {
+  animation: fadeInDown 0.3s ease;
+}
+
+@keyframes fadeInDown {
+  from { opacity: 0; transform: translateY(-8px); }
+  to   { opacity: 1; transform: translateY(0); }
 }

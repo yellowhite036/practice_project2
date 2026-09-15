@@ -88,6 +88,11 @@ function createMockPool(options = {}) {
         return { rows: data.molds.filter((row) => row.mold_id === params[0]) };
       }
       if (sql.includes("FROM molds ORDER BY")) return { rows: data.molds };
+      if (sql.includes("UPDATE molds SET is_active = FALSE")) {
+        const mold = data.molds.find((row) => row.mold_id === params[0] && row.is_active !== false);
+        if (mold) mold.is_active = false;
+        return { rows: mold ? [{ mold_id: mold.mold_id }] : [] };
+      }
       if (sql.includes("DELETE FROM molds")) return { rows: params[0] === "UNKNOWN" ? [] : [{ mold_id: params[0] }] };
       if (sql.includes("UPDATE molds\n       SET name")) {
         const id = params[5];

@@ -70,6 +70,7 @@
         opacity: 0;
         transform: translateY(8px);
       }
+
       to {
         opacity: 1;
         transform: translateY(0);
@@ -219,13 +220,15 @@
 </head>
 
 <body>
-  <div id="loginOverlay" class="login-overlay" style="display: none; position: fixed; top: 0; left: 0; right: 0; bottom: 0; background: var(--bg-color); z-index: 1000; justify-content: center; align-items: center;">
+  <div id="loginOverlay" class="login-overlay"
+    style="display: none; position: fixed; top: 0; left: 0; right: 0; bottom: 0; background: var(--bg-color); z-index: 1000; justify-content: center; align-items: center;">
     <div class="panel" style="width: 100%; max-width: 400px; padding: 24px;">
       <h2 style="margin-top: 0; margin-bottom: 24px; text-align: center;">WMS+MES 系統登入</h2>
       <form id="loginForm" style="display: flex; flex-direction: column; gap: 16px;">
         <label>
           使用者 ID
-          <input type="text" id="loginUserId" name="userId" placeholder="例如: admin, manager, operator" required style="width: 100%; box-sizing: border-box; margin-top: 8px;" />
+          <input type="text" id="loginUserId" name="userId" placeholder="例如: admin, manager, operator" required
+            style="width: 100%; box-sizing: border-box; margin-top: 8px;" />
         </label>
         <div id="loginError" class="status-pill bad" style="display: none; align-self: flex-start;"></div>
         <button type="submit" id="loginBtn" class="primary-action" style="margin-top: 8px;">登入</button>
@@ -256,7 +259,8 @@
       <nav class="nav-tabs" aria-label="功能頁籤">
         <button class="nav-button active" data-view="workorders" type="button">工單派發</button>
         <button class="nav-button" data-view="materials" type="button">材料庫存</button>
-        <button class="nav-button admin-only" data-view="molds" type="button">模具排程</button>
+        <button class="nav-button admin-only" data-view="autoorders" type="button">自動下單</button>
+        <button class="nav-button admin-only" data-view="molds" type="button">產線與模具管理</button>
         <button class="nav-button admin-only" data-view="products" type="button">產品 BOM</button>
         <button class="nav-button admin-only" data-view="logs" type="button">系統紀錄</button>
       </nav>
@@ -329,11 +333,7 @@
               </label>
               <label>
                 產線
-                <select id="lineSelect" name="line">
-                  <option value="L1">L1 成型線</option>
-                  <option value="L2">L2 組裝線</option>
-                  <option value="L3">L3 包裝線</option>
-                </select>
+                <select id="lineSelect" name="line"></select>
               </label>
             </div>
 
@@ -408,15 +408,68 @@
         </div>
       </section>
 
+      <section id="autoorders" class="view" aria-labelledby="autoOrdersTitle">
+        <form id="autoOrderForm" class="panel table-panel">
+          <div class="panel-heading">
+            <div>
+              <p class="eyebrow">Order Scheduler × PostgreSQL</p>
+              <h3 id="autoOrdersTitle">自動下單</h3>
+              <p class="auto-order-note">輸入訂單需求後，系統自動建立工單並開始生產。可同時輸入多個產品訂單。<br><small>⏱ 生產速度依材質：塑膠 1秒／件　鐵 2秒／件　木頭
+                  3秒／件　玻璃 4秒／件</small></p>
+            </div>
+            <div style="display:flex; gap:8px;">
+              <button id="analyzeAutoOrderButton" type="button" class="secondary-action">產生最佳排程</button>
+              <button id="confirmAutoOrderButton" type="submit" class="primary-action"
+                style="width: auto;">建立工單並自動生產</button>
+            </div>
+          </div>
+
+          <!-- 多產品訂單輸入區 -->
+          <div id="autoOrderRowsContainer" style="display:flex; flex-direction:column; gap:10px; margin-bottom:12px;">
+            <div class="auto-order-row" data-row="0"
+              style="display:flex; align-items:center; gap:10px; background:var(--surface-2,rgba(255,255,255,0.04)); border-radius:8px; padding:10px 14px;">
+              <label style="flex:2; margin:0;">訂單產品
+                <select class="auto-order-row-product" name="autoOrderProduct[]" required></select>
+              </label>
+              <label style="flex:1; margin:0;">下單數量
+                <input class="auto-order-row-qty" name="autoOrderQuantity[]" type="number" min="1" step="1"
+                  placeholder="例如 5000" required>
+              </label>
+              <label style="flex:1; margin:0;">交期 (EDD)
+                <input class="auto-order-row-due" name="autoOrderDue[]" type="date" required>
+              </label>
+              <button type="button" class="remove-auto-order-row danger-action"
+                style="margin-top:20px; padding:4px 10px; font-size:13px; display:none;" aria-label="刪除此行">✕</button>
+            </div>
+          </div>
+          <button type="button" id="addAutoOrderRowBtn" class="secondary-action"
+            style="width:auto; margin-bottom:14px; font-size:13px;">＋ 新增產品</button>
+
+          <div id="autoOrderSuggestions" class="auto-order-suggestions"></div>
+          <p id="autoOrderResult" class="auto-order-result" role="status"></p>
+
+          <!-- 自動生產進度追蹤區 -->
+          <div id="autoProductionProgress" style="display:none; margin-top:16px;">
+            <div style="font-weight:600; margin-bottom:10px; color:var(--accent, #7c6ef2);">⚙️ 自動生產進度</div>
+            <div id="autoProductionList" style="display:flex; flex-direction:column; gap:8px;"></div>
+          </div>
+          <div id="queueStatusPanel" style="margin-top:20px;"></div>
+        </form>
+      </section>
+
       <section id="molds" class="view" aria-labelledby="moldsTitle">
         <div class="panel table-panel">
           <div class="panel-heading">
             <div>
-              <p class="eyebrow">MES Mold Scheduler</p>
-              <h3 id="moldsTitle">模具排程</h3>
+              <p class="eyebrow">Production Lines × Molds</p>
+              <h3 id="moldsTitle">產線與模具管理</h3>
             </div>
-            <button id="releaseMoldsButton" class="secondary-action admin-only" type="button">釋放已完成模具</button>
+            <div style="display:flex; gap:8px;">
+              <button id="addMoldButton" class="primary-action admin-only" type="button">新增模具</button>
+              <button id="releaseMoldsButton" class="secondary-action admin-only" type="button">釋放已完成模具</button>
+            </div>
           </div>
+          <div id="productionManagement" class="panel" style="margin: 14px 0;"></div>
           <div id="moldCards" class="mold-grid"></div>
         </div>
       </section>
@@ -519,7 +572,33 @@
     </form>
   </dialog>
 
-  <script src="./app.js?v=7"></script>
+  <!-- Mold Modal -->
+  <div id="moldModal" class="modal-overlay" style="display: none;">
+    <div class="modal">
+      <div class="modal-header">
+        <h3 id="moldModalTitle">新增模具</h3>
+        <button class="close-modal-btn" aria-label="關閉">✕</button>
+      </div>
+      <form id="moldForm" class="modal-body">
+        <label>模具代號 (ID) <span style="color:var(--danger)">*</span>
+          <input type="text" id="moldIdInput" name="mold_id" required>
+        </label>
+        <label>模具名稱 <span style="color:var(--danger)">*</span>
+          <input type="text" id="moldNameInput" name="name" required>
+        </label>
+        <label>綁定產品
+          <select id="moldProductInput" name="product_id">
+            <option value="">(無)</option>
+          </select>
+        </label>
+        <div class="modal-footer" style="margin-top: 16px;">
+          <button type="submit" class="primary-action">儲存</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <script src="app.js"></script>
 </body>
 
 </html>

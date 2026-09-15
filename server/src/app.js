@@ -10,6 +10,10 @@ const createWorkOrdersRouter = require("./routes/workOrders");
 const createLogsRouter = require("./routes/logs");
 const createAuthRouter = require("./routes/auth");
 const createQuestionRouter = require("./routes/question");   // ← 新增 1
+const createAutoOrdersRouter = require("./routes/autoOrders");
+const createLinesRouter = require("./routes/lines");
+const createLineRatesRouter = require("./routes/lineRates");
+const createItemMoldsRouter = require("./routes/itemMolds");
 
 function createApp(options = {}) {
   const pool = options.pool || defaultPool;
@@ -34,11 +38,15 @@ function createApp(options = {}) {
   app.use("/api/materials", createMaterialsRouter(pool));
   app.use("/api/products", createProductsRouter(pool));
   app.use("/api/molds", createMoldsRouter(pool));
+  app.use("/api/lines", createLinesRouter(pool));
+  app.use("/api/lines", createLineRatesRouter(pool));
+  app.use("/api/items", createItemMoldsRouter(pool));
   app.use("/api/bom", createBomRouter(pool));
   app.use("/api/work-orders", createWorkOrdersRouter(pool));
   app.use("/api/logs", createLogsRouter(pool));
   app.use("/api/auth", createAuthRouter(pool));
   app.use("/api/question", createQuestionRouter(pool));      // ← 新增 2
+  app.use("/api/auto-orders", createAutoOrdersRouter(pool));
 
   app.use(notFound);
   app.use(errorHandler);

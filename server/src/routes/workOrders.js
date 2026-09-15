@@ -90,7 +90,70 @@ module.exports = function createWorkOrdersRouter(pool) {
       }
 
       /*
-       * 3. Update status
+       * 3. Lock Mold (moved here from POST /work-orders so queued orders can be created freely)
+       */
+      const moldResult = await client.query(
+        `SELECT mold_id, status
+         FROM molds
+         WHERE mold_id = $1
+         FOR UPDATE`,
+        [wo.mold_id]
+      );
+
+      if (moldResult.rows.length === 0) {
+        throw createHttpError(400, "Mold not found");
+      }
+
+      if (moldResult.rows[0].status !== "Idle") {
+        /*
+         * Auto-reset: only a genuinely In_Progress work order means the
+         * mold is truly busy. Stale Pending WOs (from crashed sessions)
+         * are force-completed and the mold is reset so we can proceed.
+         */
+        const inProgressWo = await client.query(
+          `SELECT work_order_id FROM work_orders
+           WHERE mold_id = $1
+             AND status = 'In_Progress'
+             AND work_order_id != $2
+           LIMIT 1`,
+          [wo.mold_id, workOrderId]
+        );
+
+        if (inProgressWo.rows.length > 0) {
+          // A genuinely running work order holds the mold
+          throw createHttpError(409, "Mold is currently in use");
+        }
+
+        // Only stale Pending WOs hold the mold — force-complete them and reset
+        await client.query(
+          `UPDATE work_orders
+           SET status = 'Completed', updated_at = now()
+           WHERE mold_id = $1
+             AND status = 'Pending'
+             AND work_order_id != $2`,
+          [wo.mold_id, workOrderId]
+        );
+
+        await client.query(
+          `UPDATE molds SET status = 'Idle', updated_at = now() WHERE mold_id = $1`,
+          [wo.mold_id]
+        );
+      }
+
+      /*
+       * 4. Set Mold -> In_Use
+       */
+      await client.query(
+        `UPDATE molds
+         SET status = 'In_Use',
+             product_id = $1,
+             updated_at = now()
+         WHERE mold_id = $2`,
+        [wo.product_id, wo.mold_id]
+      );
+
+      /*
+       * 5. Update Work Order status
        */
       const updateResult = await client.query(
         `UPDATE work_orders
@@ -102,7 +165,7 @@ module.exports = function createWorkOrdersRouter(pool) {
       );
 
       /*
-       * 4. System Log
+       * 6. System Log
        */
       await client.query(
         `INSERT INTO system_logs (
@@ -619,29 +682,24 @@ module.exports = function createWorkOrdersRouter(pool) {
         }
 
         /*
-         * 5. Lock Mold
+         * 5. Verify Mold exists (no locking here; mold is locked when work order is started)
          */
         const moldResult = await client.query(
           `SELECT mold_id, status
            FROM molds
-           WHERE mold_id = $1
-           FOR UPDATE`,
+           WHERE mold_id = $1`,
           [mold_id]
         );
 
         if (moldResult.rows.length === 0) {
           throw createHttpError(400, "Mold not found");
         }
-
-        /*
-         * 6. Check Mold status
-         */
         if (moldResult.rows[0].status !== "Idle") {
           throw createHttpError(409, "Mold is currently in use");
         }
 
         /*
-         * 7. Generate Work Order ID (原子產生，取代前端拼字串)
+         * 6. Generate Work Order ID (原子產生，取代前端拼字串)
          *
          * 使用 PostgreSQL SEQUENCE (work_order_seq) 在同一個
          * Transaction 內取號，nextval() 本身就是原子操作，
@@ -733,19 +791,7 @@ module.exports = function createWorkOrdersRouter(pool) {
         }
 
         /*
-         * 11. Update Mold -> In_Use
-         */
-        await client.query(
-          `UPDATE molds
-           SET status = 'In_Use',
-               product_id = $1,
-               updated_at = now()
-           WHERE mold_id = $2`,
-          [product_id, mold_id]
-        );
-
-        /*
-         * 12. Insert System Log
+         * 11. Insert System Log (Mold is NOT locked here; locking happens on start)
          */
         await client.query(
           `INSERT INTO system_logs (
