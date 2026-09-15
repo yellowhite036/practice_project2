@@ -79,6 +79,7 @@ function showMoldModal() {
   modal.style.display = "flex";
   $("#moldIdInput").value = "";
   $("#moldNameInput").value = "";
+  $("#moldTypeInput").value = "";
 
   const productSelect = $("#moldProductInput");
   if (productSelect) {
@@ -93,11 +94,12 @@ async function saveMold(e) {
   const id = $("#moldIdInput").value.trim();
   const name = $("#moldNameInput").value.trim();
   const productId = $("#moldProductInput").value || null;
+  const moldType = $("#moldTypeInput").value.trim() || null;
 
   if (!id || !name) return;
 
   try {
-    await apiRequest("POST", "/molds", { mold_id: id, name, product_id: productId, status: "Idle" });
+    await apiRequest("POST", "/molds", { mold_id: id, name, product_id: productId, mold_type: moldType, status: "Idle" });
     addLog("INFO", `已新增模具 ${id} (${name})`);
     closeModals();
     await refreshStateFromApi();
@@ -273,6 +275,7 @@ function mapMold(row) {
     eta: row.eta || "-",
     productId: row.product_id || "",
     code: row.code || "",
+    moldType: row.mold_type || "",
     isActive: row.is_active !== false,
     version: row.version || 1
   };
@@ -783,11 +786,11 @@ function renderMolds() {
           <div class="card-top">
             <div>
               <h4>${mold.name}</h4>
-              <p>${mold.id} · 綁定 ${product ? product.name : "-"}</p>
+              <p>${mold.id}${mold.moldType ? ` · ${escapeHtml(mold.moldType)}` : ""} · 共用模具</p>
             </div>
             <span class="status-pill ${mold.status === "Idle" ? "ok" : "warn"}">${translateMoldStatus(mold.status)}</span>
           </div>
-          <p>產線位置：${mold.line}</p>
+          <p>適用產線：依產線品項能力自動判定（共用）</p>
           <p>預計放開：${mold.eta}</p>
           <div style="margin-top: 12px; display: flex; justify-content: flex-end; gap: 8px;">
             ${locked && canWrite() ? `<button class="secondary-action manual-release-mold-btn" data-id="${mold.id}" type="button">手動釋放</button>` : ""}
@@ -1926,6 +1929,9 @@ function bindEvents() {
             line: mold.line === "-" ? null : mold.line,
             eta: mold.eta === "-" ? null : mold.eta,
             product_id: null,
+            code: mold.code || null,
+            mold_type: mold.moldType || null,
+            is_active: mold.isActive,
             version: mold.version
           });
           addLog("INFO", `已手動強制釋放模具: ${mold.name} (${id})`);
