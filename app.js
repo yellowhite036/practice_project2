@@ -1,4 +1,4 @@
-﻿const API_BASE_URL = "/api";
+const API_BASE_URL = "/api";
 
 // ============================================================
 // JWT TOKEN MANAGEMENT
@@ -49,8 +49,7 @@ function createEmptyState() {
     activeView: "workorders",
     materials: [],
     lines: [],
-    lineItemRates: [],
-    itemMoldOptions: [],
+    lineMoldOptions: [],
     molds: [],
     products: [],
     bomTable: [],
@@ -76,16 +75,29 @@ let autoOrderBusy = false; // prevents double-submit during WO creation
 function showMoldModal() {
   const modal = $("#moldModal");
   if (!modal) return;
-  modal.style.display = "flex";
+  modal.showModal();
   $("#moldIdInput").value = "";
   $("#moldNameInput").value = "";
   $("#moldTypeInput").value = "";
 
-  const productSelect = $("#moldProductInput");
-  if (productSelect) {
-    productSelect.innerHTML = '<option value="">(無)</option>' +
-      state.products.map(p => `<option value="${escapeHtml(p.id)}">${escapeHtml(p.name)} (${escapeHtml(p.id)})</option>`).join("");
-    productSelect.value = "";
+  // Build product-type list from existing products, deduplicated by mold
+  const typeSelect = $("#moldProductTypeInput");
+  if (typeSelect) {
+    const typeMap = new Map();
+    for (const p of state.products) {
+      const moldId = p.moldId || p.mold_id;
+      if (!moldId || typeMap.has(moldId)) continue;
+      const materialPrefixes = ["玻璃", "鐵", "木頭", "木", "塑膠"];
+      let label = p.name;
+      for (const prefix of materialPrefixes) {
+        if (label.startsWith(prefix)) { label = label.slice(prefix.length); break; }
+      }
+      typeMap.set(moldId, { moldId, label });
+    }
+    const options = [...typeMap.values()].sort((a, b) => a.label.localeCompare(b.label, "zh-Hant"));
+    typeSelect.innerHTML = '<option value="">（請選擇）</option>' +
+      options.map(t => `<option value="${escapeHtml(t.moldId)}">${escapeHtml(t.label)}</option>`).join("");
+    typeSelect.value = "";
   }
 }
 
@@ -93,8 +105,12 @@ async function saveMold(e) {
   e.preventDefault();
   const id = $("#moldIdInput").value.trim();
   const name = $("#moldNameInput").value.trim();
-  const productId = $("#moldProductInput").value || null;
   const moldType = $("#moldTypeInput").value.trim() || null;
+  const selectedMoldId = ($("#moldProductTypeInput") && $("#moldProductTypeInput").value) || null;
+  const matchedProduct = selectedMoldId
+    ? state.products.find(p => (p.moldId || p.mold_id) === selectedMoldId)
+    : null;
+  const productId = matchedProduct ? matchedProduct.id : null;
 
   if (!id || !name) return;
 
@@ -284,6 +300,7 @@ function mapMold(row) {
 function mapLine(row) { return { id: Number(row.id), name: row.name, isActive: row.is_active !== false, createdAt: row.created_at }; }
 function mapLineRate(row) { return { lineId: Number(row.line_id), productId: row.product_id, unitsPerHour: Number(row.units_per_hour) }; }
 function mapItemMoldOption(row) { return { productId: row.product_id, moldId: row.mold_id, preferred: Boolean(row.is_preferred) }; }
+function mapLineMoldOption(row) { return { lineId: Number(row.line_id), moldId: row.mold_id }; }
 
 function mapBom(row) {
   return {
@@ -335,8 +352,7 @@ async function fetchBackendState() {
   const results = await Promise.all(requests);
   const [materials, products, molds, bomTable, workOrders, lines] = results;
   const logs = canReadLogs ? results[6] : [];
-  const rateGroups = await Promise.all(lines.map(line => apiRequest("GET", `/lines/${line.id}/rates`)));
-  const moldOptionGroups = await Promise.all(products.map(product => apiRequest("GET", `/items/${encodeURIComponent(product.product_id)}/molds`)));
+  const lineMolds = await apiRequest("GET", "/lines/molds");
   return {
     materials: materials.map(mapMaterial),
     products: products.map(mapProduct),
@@ -344,8 +360,7 @@ async function fetchBackendState() {
     bomTable: bomTable.map(mapBom),
     workOrders: workOrders.map(mapWorkOrder),
     lines: lines.map(mapLine),
-    lineItemRates: rateGroups.flat().map(mapLineRate),
-    itemMoldOptions: moldOptionGroups.flat().map(mapItemMoldOption),
+    lineMoldOptions: lineMolds.map(mapLineMoldOption),
     logs: logs.map(mapLog)
   };
 }
@@ -550,15 +565,19 @@ function renderMaterialOptions() {
 function renderMoldOptions() {
   const select = $("#moldSelect");
   if (!select) return;
-  if (state.molds.length === 0) {
-    select.innerHTML = `<option value="">無模具資料</option>`;
+  const lineName = $("#lineSelect")?.value;
+  const line = state.lines.find(item => item.name === lineName);
+  const availableIds = new Set(state.lineMoldOptions.filter(option => option.lineId === line?.id).map(option => option.moldId));
+  const molds = state.molds.filter(mold => mold.isActive && availableIds.has(mold.id));
+  if (molds.length === 0) {
+    select.innerHTML = `<option value="">此產線尚未設定可用模具</option>`;
     return;
   }
-  const currentValue = select.value || state.molds[0].id;
-  select.innerHTML = state.molds
+  const currentValue = select.value || molds[0].id;
+  select.innerHTML = molds
     .map((mold) => `<option value="${mold.id}">${mold.name} (${translateMoldStatus(mold.status)})</option>`)
     .join("");
-  select.value = state.molds.some((mold) => mold.id === currentValue) ? currentValue : state.molds[0].id;
+  select.value = molds.some((mold) => mold.id === currentValue) ? currentValue : molds[0].id;
 }
 
 function renderLineOptions() {
@@ -572,17 +591,17 @@ function renderLineOptions() {
 function renderProductionManagement() {
   const container = $("#productionManagement");
   if (!container) return;
-  const productOptions = state.products.map(product => `<option value="${escapeHtml(product.id)}">${escapeHtml(product.name)} (${escapeHtml(product.id)})</option>`).join("");
+  const selectedId = state.selectedManagementLineId || state.lines.find(line => line.isActive)?.id;
+  const assignedIds = new Set(state.lineMoldOptions.filter(option => option.lineId === selectedId).map(option => option.moldId));
   const lines = state.lines.map(line => {
-    const count = state.lineItemRates.filter(rate => rate.lineId === line.id).length;
-    return `<li><strong>${escapeHtml(line.name)}</strong> · ${line.isActive ? "啟用" : "停用"} · ${count} 個品項能力
+    const assigned = state.lineMoldOptions.filter(option => option.lineId === line.id).map(option => getMold(option.moldId)?.name).filter(Boolean);
+    return `<li><strong>${escapeHtml(line.name)}</strong> · ${line.isActive ? "啟用" : "停用"} · 可用模具：${assigned.length ? assigned.map(escapeHtml).join("、") : "尚未設定"}
       <button type="button" class="toggle-line-btn secondary-action" data-id="${line.id}" data-active="${line.isActive}">${line.isActive ? "停用" : "啟用"}</button></li>`;
   }).join("") || "<li>尚無產線</li>";
-  container.innerHTML = `<div class="panel-heading"><div><p class="eyebrow">Database-managed resources</p><h4>產線能力設定</h4></div></div>
+  container.innerHTML = `<div class="panel-heading"><div><p class="eyebrow">Shared mold access</p><h4>產線可用模具設定</h4><p>模具是共用資源；同一副模具可同時指派給多條產線，但使用中會由工單鎖定。</p></div></div>
     <form id="addLineForm" class="form-grid"><label>新增產線<input id="newLineName" maxlength="100" placeholder="例如 L4" required></label><button class="primary-action" type="submit">新增產線</button></form>
     <ul>${lines}</ul>
-    <form id="lineRateForm" class="form-grid"><label>產線<select id="rateLineId">${state.lines.filter(line => line.isActive).map(line => `<option value="${line.id}">${escapeHtml(line.name)}</option>`).join("")}</select></label><label>品項<select id="rateProductId">${productOptions}</select></label><label>每小時產量<input id="rateUnits" type="number" min="0.001" step="0.001" required></label><button class="primary-action" type="submit">儲存能力</button></form>
-    <form id="itemMoldForm" class="form-grid"><label>品項<select id="itemMoldProduct">${productOptions}</select></label><label>可用模具（可複選）<select id="itemMoldIds" multiple size="3">${state.molds.filter(mold => mold.isActive).map(mold => `<option value="${escapeHtml(mold.id)}">${escapeHtml(mold.name)} (${escapeHtml(mold.id)})</option>`).join("")}</select></label><label>優先模具<select id="preferredMoldId"><option value="">無</option>${state.molds.filter(mold => mold.isActive).map(mold => `<option value="${escapeHtml(mold.id)}">${escapeHtml(mold.name)}</option>`).join("")}</select></label><button class="primary-action" type="submit">儲存模具對應</button></form>`;
+    <form id="lineMoldForm" class="form-grid"><label>產線<select id="managedLineId">${state.lines.filter(line => line.isActive).map(line => `<option value="${line.id}" ${line.id === selectedId ? "selected" : ""}>${escapeHtml(line.name)}</option>`).join("")}</select></label><label>此產線可用的共用模具（可複選）<select id="managedMoldIds" multiple size="4">${state.molds.filter(mold => mold.isActive).map(mold => `<option value="${escapeHtml(mold.id)}" ${assignedIds.has(mold.id) ? "selected" : ""}>${escapeHtml(mold.name)}${mold.moldType ? ` · ${escapeHtml(mold.moldType)}` : ""}</option>`).join("")}</select></label><button class="primary-action" type="submit">儲存模具授權</button></form>`;
 }
 
 async function saveLine(event) {
@@ -592,30 +611,22 @@ async function saveLine(event) {
   catch (error) { addLog("ERR", `新增產線失敗: ${error.message}`); render(); }
 }
 
-async function saveLineRate(event) {
+async function saveLineMolds(event) {
   event.preventDefault();
-  const lineId = $("#rateLineId").value; const productId = $("#rateProductId").value; const units = Number($("#rateUnits").value);
-  try { await apiRequest("PUT", `/lines/${lineId}/rates/${encodeURIComponent(productId)}`, { units_per_hour: units }); await refreshStateFromApi(); render(); }
-  catch (error) { addLog("ERR", `儲存產線能力失敗: ${error.message}`); render(); }
-}
-
-async function saveItemMolds(event) {
-  event.preventDefault();
-  const productId = $("#itemMoldProduct").value;
-  const moldIds = [...$("#itemMoldIds").selectedOptions].map(option => option.value);
-  const preferred = $("#preferredMoldId").value || null;
-  try { await apiRequest("PUT", `/items/${encodeURIComponent(productId)}/molds`, { mold_ids: moldIds, preferred_mold_id: preferred }); await refreshStateFromApi(); render(); }
-  catch (error) { addLog("ERR", `儲存品項模具對應失敗: ${error.message}`); render(); }
+  const lineId = $("#managedLineId").value;
+  const moldIds = [...$("#managedMoldIds").selectedOptions].map(option => option.value);
+  try { await apiRequest("PUT", `/lines/${lineId}/molds`, { mold_ids: moldIds }); await refreshStateFromApi(); state.selectedManagementLineId = Number(lineId); render(); }
+  catch (error) { addLog("ERR", `儲存產線模具授權失敗: ${error.message}`); render(); }
 }
 
 function getDerivedProduct() {
   const matId = $("#materialSelect") ? $("#materialSelect").value : null;
   const moldId = $("#moldSelect") ? $("#moldSelect").value : null;
-  if (!matId || !moldId) return state.products[0] || null;
+  if (!matId || !moldId) return null;
   return state.products.find((p) =>
     p.moldId === moldId &&
     (state.bomTable || []).some((b) => b.productId === p.id && b.materialId === matId)
-  ) || state.products[0] || null;
+  ) || null;
 }
 
 function renderCombinedProduct() {
@@ -1050,6 +1061,23 @@ function renderAutoOrders() {
   }
 }
 
+
+function getCapableMoldIdsForProduct(product) {
+  const categoryMoldId = product.moldId || product.mold_id;
+  const capableMoldIds = new Set([categoryMoldId]);
+
+  const siblingProductIds = state.products
+    .filter(p => (p.moldId || p.mold_id) === categoryMoldId)
+    .map(p => p.id);
+
+  for (const mold of state.molds) {
+    if (mold.productId && siblingProductIds.includes(mold.productId)) {
+      capableMoldIds.add(mold.id);
+    }
+  }
+  return Array.from(capableMoldIds);
+}
+
 async function analyzeAutoOrders() {
   const result = $("#autoOrderResult");
   if (result) result.textContent = "";
@@ -1085,16 +1113,19 @@ async function analyzeAutoOrders() {
 
   state.autoOrderProposals = [];
   const summaryParts = [];
+  const lineUsageCount = {};
 
   for (const { product, quantity } of orderItems) {
-    const capableLines = state.lines.filter(line => line.isActive && state.lineItemRates.some(rate => rate.lineId === line.id && rate.productId === product.id && rate.unitsPerHour > 0));
-    const optionMoldIds = state.itemMoldOptions.filter(option => option.productId === product.id).map(option => option.moldId);
+    const optionMoldIds = getCapableMoldIdsForProduct(product);
     const candidateMolds = state.molds.filter(mold => mold.isActive && (mold.status === "Idle" || mold.status === "In_Use") && optionMoldIds.includes(mold.id)).slice(0, 10);
+    const capableLines = state.lines.filter(line => line.isActive && state.lineMoldOptions.some(opt => opt.lineId === line.id && optionMoldIds.includes(opt.moldId)));
 
     if (candidateMolds.length === 0 || capableLines.length === 0) {
       summaryParts.push(`【${product.name}】${candidateMolds.length ? "沒有具備生產能力的啟用產線" : "找不到已啟用的可用模具"}，已略過。`);
       continue;
     }
+
+    capableLines.sort((a, b) => (lineUsageCount[a.id] || 0) - (lineUsageCount[b.id] || 0));
 
     const slots = Math.min(candidateMolds.length, capableLines.length);
     const base = Math.floor(quantity / slots);
@@ -1103,7 +1134,8 @@ async function analyzeAutoOrders() {
     const proposals = candidateMolds.slice(0, slots).map((mold, index) => {
       const assignedQuantity = base + (index < remainder ? 1 : 0);
       const line = capableLines[index];
-      const rate = state.lineItemRates.find(item => item.lineId === line.id && item.productId === product.id)?.unitsPerHour;
+      lineUsageCount[line.id] = (lineUsageCount[line.id] || 0) + 1;
+      const rate = Math.round(3600000 / getMaterialSpeedMs(product.id));
       const moldStatusLabel = mold.status === "In_Use" ? "（使用中，將排隊等待）" : "";
       return {
         product_id: product.id, product_name: product.name, quantity: assignedQuantity,
@@ -1528,8 +1560,10 @@ function showStockModal(id) {
 function closeModals() {
   const m1 = $("#materialModal");
   const m2 = $("#stockModal");
+  const m3 = $("#moldModal");
   if (m1) m1.close();
   if (m2) m2.close();
+  if (m3) m3.close();
 }
 
 async function saveMaterial(event) {
@@ -1865,6 +1899,7 @@ function bindEvents() {
       if (event.target.id === "addLineForm") saveLine(event);
       if (event.target.id === "lineRateForm") saveLineRate(event);
       if (event.target.id === "itemMoldForm") saveItemMolds(event);
+      if (event.target.id === "lineMoldForm") saveLineMolds(event);
     });
     productionManagement.addEventListener("click", async (event) => {
       const button = event.target.closest(".toggle-line-btn");

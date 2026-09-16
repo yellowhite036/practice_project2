@@ -573,13 +573,9 @@
   </dialog>
 
   <!-- Mold Modal -->
-  <div id="moldModal" class="modal-overlay" style="display: none;">
-    <div class="modal">
-      <div class="modal-header">
-        <h3 id="moldModalTitle">新增模具</h3>
-        <button class="close-modal-btn" aria-label="關閉">✕</button>
-      </div>
-      <form id="moldForm" class="modal-body">
+  <dialog id="moldModal">
+    <form id="moldForm" class="dialog-content">
+      <h3 id="moldModalTitle">新增模具</h3>
         <label>模具代號 (ID) <span style="color:var(--danger)">*</span>
           <input type="text" id="moldIdInput" name="mold_id" required>
         </label>
@@ -589,17 +585,17 @@
         <label>模具類型
           <input type="text" id="moldTypeInput" name="mold_type" placeholder="例如：射出、吹塑、沖壓">
         </label>
-        <label>綁定產品
-          <select id="moldProductInput" name="product_id">
-            <option value="">(無)</option>
+        <label>適用產品類型 <span style="color:var(--muted); font-weight:400; font-size:12px;">（選擇此模具能生產的產品種類）</span>
+          <select id="moldProductTypeInput" name="product_type">
+            <option value="">（請選擇）</option>
           </select>
         </label>
-        <div class="modal-footer" style="margin-top: 16px;">
-          <button type="submit" class="primary-action">儲存</button>
-        </div>
-      </form>
-    </div>
-  </div>
+        <div class="dialog-actions">
+        <button type="button" class="secondary-action close-modal-btn">取消</button>
+        <button type="submit" class="primary-action" style="width: auto;">儲存</button>
+      </div>
+    </form>
+  </dialog>
 
   <script src="app.js"></script>
 </body>

@@ -14,6 +14,7 @@ const createAutoOrdersRouter = require("./routes/autoOrders");
 const createLinesRouter = require("./routes/lines");
 const createLineRatesRouter = require("./routes/lineRates");
 const createItemMoldsRouter = require("./routes/itemMolds");
+const createLineMoldsRouter = require("./routes/lineMolds");
 
 function createApp(options = {}) {
   const pool = options.pool || defaultPool;
@@ -40,6 +41,7 @@ function createApp(options = {}) {
   app.use("/api/molds", createMoldsRouter(pool));
   app.use("/api/lines", createLinesRouter(pool));
   app.use("/api/lines", createLineRatesRouter(pool));
+  app.use("/api/lines", createLineMoldsRouter(pool));
   app.use("/api/items", createItemMoldsRouter(pool));
   app.use("/api/bom", createBomRouter(pool));
   app.use("/api/work-orders", createWorkOrdersRouter(pool));
