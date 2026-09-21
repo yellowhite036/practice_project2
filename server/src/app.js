@@ -4,9 +4,12 @@ const defaultPool = require("./db/pool");
 const { errorHandler, notFound } = require("./middleware/errorHandler");
 const createMaterialsRouter = require("./routes/materials");
 const createProductsRouter = require("./routes/products");
+const createRoutingsRouter = require("./routes/routings");
 const createMoldsRouter = require("./routes/molds");
 const createBomRouter = require("./routes/bom");
 const createWorkOrdersRouter = require("./routes/workOrders");
+const createWorkOrderTasksRouter = require("./routes/workOrderTasks");
+const createAovGraphsRouter = require("./routes/aovGraphs");
 const createLogsRouter = require("./routes/logs");
 const createAuthRouter = require("./routes/auth");
 const createQuestionRouter = require("./routes/question");   // ← 新增 1
@@ -38,13 +41,16 @@ function createApp(options = {}) {
 
   app.use("/api/materials", createMaterialsRouter(pool));
   app.use("/api/products", createProductsRouter(pool));
+  app.use("/api/routings", createRoutingsRouter(pool));
   app.use("/api/molds", createMoldsRouter(pool));
   app.use("/api/lines", createLinesRouter(pool));
   app.use("/api/lines", createLineRatesRouter(pool));
   app.use("/api/lines", createLineMoldsRouter(pool));
   app.use("/api/items", createItemMoldsRouter(pool));
   app.use("/api/bom", createBomRouter(pool));
+  app.use("/api/aov-graphs", createAovGraphsRouter(pool));
   app.use("/api/work-orders", createWorkOrdersRouter(pool));
+  app.use("/api/work-orders", createWorkOrderTasksRouter(pool));
   app.use("/api/logs", createLogsRouter(pool));
   app.use("/api/auth", createAuthRouter(pool));
   app.use("/api/question", createQuestionRouter(pool));      // ← 新增 2

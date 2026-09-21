@@ -7,23 +7,24 @@ const OLLAMA_MODEL = process.env.OLLAMA_MODEL || "qwen2.5:7b-instruct-q4_K_M";
 const asyncRoute = handler => (req, res, next) => Promise.resolve(handler(req, res, next)).catch(next);
 
 async function buildDatabaseContext(pool) {
-  const [materials, molds, products, bom, workOrders, lines, rates, moldOptions] = await Promise.all([
+  const [materials, molds, products, bom, workOrders, lines, rates, moldOptions, routings] = await Promise.all([
     pool.query("SELECT material_id, name, unit, stock, capacity, safety_stock, location FROM materials ORDER BY material_id"),
     pool.query("SELECT mold_id, name, status, line, eta, product_id FROM molds ORDER BY mold_id"),
-    pool.query("SELECT product_id, name, cycle_minutes, mold_id, stock FROM products ORDER BY product_id"),
+    pool.query("SELECT product_id, name, stock FROM products ORDER BY product_id"),
     pool.query("SELECT bom_id, product_id, material_id, amount_per_unit FROM bom_table ORDER BY bom_id"),
     pool.query("SELECT work_order_id, product_id, quantity, line, mold_id, status, created_at FROM work_orders ORDER BY created_at DESC, work_order_id DESC LIMIT 100"),
     pool.query("SELECT id, name FROM production_lines WHERE is_active = TRUE ORDER BY name"),
     pool.query("SELECT lir.line_id, lir.product_id, lir.units_per_hour FROM line_item_rates lir JOIN production_lines pl ON pl.id = lir.line_id WHERE pl.is_active = TRUE"),
-    pool.query("SELECT imo.product_id, imo.mold_id, imo.is_preferred FROM item_mold_options imo JOIN molds m ON m.mold_id = imo.mold_id WHERE m.is_active = TRUE")
+    pool.query("SELECT imo.product_id, imo.mold_id, imo.is_preferred FROM item_mold_options imo JOIN molds m ON m.mold_id = imo.mold_id WHERE m.is_active = TRUE"),
+    pool.query("SELECT routing_id, product_id, step_number, operation_name, mold_id FROM product_routings ORDER BY product_id, step_number")
   ]);
   const context = [
-    "【物料庫存】",
-    materials.rows.map(row => "- " + row.material_id + " " + row.name + "：庫存 " + row.stock + row.unit + "，安全庫存 " + row.safety_stock + row.unit + "，容量上限 " + (row.capacity ?? "無")).join("\n") || "(無物料資料)",
-    "【模具狀態】",
-    molds.rows.map(row => "- " + row.mold_id + " " + row.name + "：狀態 " + row.status + "，綁定產品 " + (row.product_id ?? "無")).join("\n") || "(無模具資料)",
-    "【產品主檔】",
-    products.rows.map(row => "- " + row.product_id + " " + row.name + "：目前庫存 " + row.stock + "，模具 " + row.mold_id).join("\n") || "(無產品資料)",
+    "【原物料庫存】\n" +
+    materials.rows.map(row => "- " + row.material_id + " " + row.name + "：庫存 " + row.stock + row.unit + "，安全庫存 " + row.safety_stock + row.unit + "，容量上限 " + (row.capacity ?? "無")).join("\n") || "(無原物料資料)",
+    "【模具狀態】\n" +
+    molds.rows.map(row => "- " + row.mold_id + " " + row.name + "：狀態 " + row.status + "，綁定產線 " + (row.product_id ?? "無")).join("\n") || "(無模具資料)",
+    "【產品主檔】\n" +
+    products.rows.map(row => "- " + row.product_id + " " + row.name + "：目前庫存 " + row.stock).join("\n") || "(無產品資料)",
     "【產品 BOM】",
     bom.rows.map(row => "- " + row.product_id + " 需要 " + row.material_id + " × " + row.amount_per_unit + "/件").join("\n") || "(無 BOM 資料)",
     "【近期工單】",
@@ -31,9 +32,9 @@ async function buildDatabaseContext(pool) {
     "【可排程產線能力】",
     rates.rows.map(row => "- 產線 " + (lines.rows.find(line => line.id === row.line_id)?.name || row.line_id) + " 可生產 " + row.product_id + "：" + row.units_per_hour + "/小時").join("\n") || "(尚未設定任何產線能力)",
     "【品項可用模具】",
-    moldOptions.rows.map(row => "- " + row.product_id + "：" + row.mold_id + (row.is_preferred ? "（優先）" : "")).join("\n") || "(無模具對應資料)"
+    moldOptions.rows.map(row => "- " + row.product_id + " 支援 " + row.mold_id + (row.is_preferred ? "（優先）" : "")).join("\n") || "(無模具綁定資料)"
   ].join("\n\n");
-  return { context, products: products.rows, lines: lines.rows, rates: rates.rows, moldOptions: moldOptions.rows };
+  return { context, products: products.rows, lines: lines.rows, rates: rates.rows, moldOptions: moldOptions.rows, routings: routings.rows };
 }
 
 function extractJsonArray(text) {
@@ -121,12 +122,19 @@ module.exports = function createAutoOrdersRouter(pool) {
       if (!product || !Number.isInteger(quantity) || quantity <= 0 || quantity > 100_000 || !validLinesByProduct.get(productId)?.has(line)) return [];
       const reason = typeof candidate.reason === "string" ? candidate.reason.trim() : "";
       if (!reason) return [];
+      
+      let moldId = validMoldsByProduct.get(productId)?.[0];
+      if (!moldId) {
+        const routing = database.routings.find(r => r.product_id === productId);
+        moldId = routing ? routing.mold_id : null;
+      }
+
       return [{
         product_id: productId,
         product_name: product.name,
         quantity,
         line,
-        mold_id: validMoldsByProduct.get(productId)?.[0] || product.mold_id,
+        mold_id: moldId,
         reason
       }];
     });

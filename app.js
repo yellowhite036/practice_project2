@@ -50,12 +50,15 @@ function createEmptyState() {
     materials: [],
     lines: [],
     lineMoldOptions: [],
+    itemMoldOptions: [],
     molds: [],
     products: [],
     bomTable: [],
     workOrders: [],
     autoOrderProposals: [],
     autoOrderSources: [],
+    lastAutomation: null,
+    aovGraphs: [],
     lastAutomation: null,
     moldQueues: {},
     logs: [],
@@ -275,10 +278,34 @@ function mapProduct(row) {
   return {
     id: row.product_id,
     name: row.name,
-    cycleMinutes: Number(row.cycle_minutes),
-    moldId: row.mold_id,
     stock: Number(row.stock ?? 0),
     version: row.version || 1
+  };
+}
+function mapAovGraph(row) {
+  const product = state.products.find(p => p.id === row.product_id);
+  return {
+    id: row.id,
+    productId: row.product_id,
+    productName: product ? product.name : null,
+    name: row.name,
+    description: row.description,
+    version: row.version,
+    status: row.status,
+    createdBy: row.created_by_user_id,
+    createdAt: row.created_at,
+    updatedAt: row.updatedAt
+  };
+}
+
+function mapRouting(row) {
+  return {
+    id: row.routing_id,
+    productId: row.product_id,
+    stepNumber: Number(row.step_number),
+    operationName: row.operation_name,
+    cycleMinutes: Number(row.cycle_minutes),
+    moldId: row.mold_id
   };
 }
 
@@ -320,7 +347,8 @@ function mapWorkOrder(row) {
     line: row.line,
     moldId: row.mold_id,
     status: row.status,
-    creator: row.creator_name || row.creator_user_id || "-"
+    creator: row.creator_name || row.creator_user_id || "-",
+    aovGraphId: row.aov_graph_id
   };
 }
 
@@ -341,26 +369,37 @@ async function fetchBackendState() {
   const requests = [
     apiRequest("GET", "/materials"),
     apiRequest("GET", "/products"),
+    apiRequest("GET", "/aov-graphs"),
     apiRequest("GET", "/molds"),
     apiRequest("GET", "/bom"),
     apiRequest("GET", "/work-orders"),
-    apiRequest("GET", "/lines")
+    apiRequest("GET", "/lines"),
+    apiRequest("GET", "/routings")
   ];
   if (canReadLogs) {
     requests.push(apiRequest("GET", "/logs"));
   }
   const results = await Promise.all(requests);
-  const [materials, products, molds, bomTable, workOrders, lines] = results;
-  const logs = canReadLogs ? results[6] : [];
+  const [materials, products, aovGraphs, molds, bomTable, workOrders, lines, routings] = results;
+  const logs = canReadLogs ? results[8] : [];
   const lineMolds = await apiRequest("GET", "/lines/molds");
+
+  const itemMoldsPromises = products.map((p) =>
+    apiRequest("GET", `/items/${p.product_id}/molds`).catch(() => [])
+  );
+  const itemMoldsResults = await Promise.all(itemMoldsPromises);
+  const itemMoldOptions = itemMoldsResults.flat();
+
   return {
     materials: materials.map(mapMaterial),
     products: products.map(mapProduct),
+    aovGraphs: aovGraphs.map(mapAovGraph),
     molds: molds.map(mapMold),
     bomTable: bomTable.map(mapBom),
     workOrders: workOrders.map(mapWorkOrder),
     lines: lines.map(mapLine),
     lineMoldOptions: lineMolds.map(mapLineMoldOption),
+    itemMoldOptions: itemMoldOptions.map(mapItemMoldOption),
     logs: logs.map(mapLog)
   };
 }
@@ -479,6 +518,7 @@ function render() {
   renderMaterialOptions();
   renderLineOptions();
   renderMoldOptions();
+  renderWoAovGraphOptions();
   renderCombinedProduct();
   renderPreview();
   renderAutomationSteps(state.lastAutomation);
@@ -488,6 +528,7 @@ function render() {
   renderProductionManagement();
   renderMolds();
   renderProducts();
+  renderAovGraphs();
   renderLogs();
 }
 
@@ -562,6 +603,24 @@ function renderMaterialOptions() {
   select.value = state.materials.some((m) => m.id === currentValue) ? currentValue : state.materials[0].id;
 }
 
+function renderWoAovGraphOptions() {
+  const select = $("#woAovGraphSelect");
+  if (!select) return;
+  
+  const publishedGraphs = (state.aovGraphs || []).filter(g => g.status === 'Published' || g.status === 'PUBLISHED');
+  
+  const currentValue = select.value;
+  select.innerHTML = '<option value="">不使用 AOV Graph</option>' + publishedGraphs.map(g => 
+    `<option value="${g.id}">${escapeHtml(String(g.name))} (v${g.version})</option>`
+  ).join("");
+  
+  if (currentValue && publishedGraphs.some(g => String(g.id) === currentValue)) {
+    select.value = currentValue;
+  } else {
+    select.value = "";
+  }
+}
+
 function renderMoldOptions() {
   const select = $("#moldSelect");
   if (!select) return;
@@ -622,10 +681,18 @@ async function saveLineMolds(event) {
 function getDerivedProduct() {
   const matId = $("#materialSelect") ? $("#materialSelect").value : null;
   const moldId = $("#moldSelect") ? $("#moldSelect").value : null;
+
   if (!matId || !moldId) return null;
+
+  const possibleProductIds = state.itemMoldOptions
+    .filter((opt) => opt.moldId === moldId)
+    .map((opt) => opt.productId);
+
   return state.products.find((p) =>
-    p.moldId === moldId &&
-    (state.bomTable || []).some((b) => b.productId === p.id && b.materialId === matId)
+    possibleProductIds.includes(p.id) &&
+    (state.bomTable || []).some(
+      (b) => b.productId === p.id && b.materialId === matId
+    )
   ) || null;
 }
 
@@ -713,13 +780,14 @@ function renderWorkOrders() {
       const statusClass = order.status === "Pending" ? "warn" : order.status === "In_Progress" ? "ok" : order.status === "Completed" ? "ok" : "bad";
 
       const showActions = canWrite();
-      let actionHtml = "-";
-      if (showActions && (order.status === "Pending" || order.status === "In_Progress")) {
-        const inProgress = workOrderActionInProgress.has(order.id);
-        const btnDisabled = inProgress ? "disabled" : "";
-        const btnText = (originalText) => inProgress ? "處理中..." : originalText;
+      const inProgress = workOrderActionInProgress.has(order.id);
+      const btnDisabled = inProgress ? "disabled" : "";
+      const btnText = (originalText) => inProgress ? "處理中..." : originalText;
 
-        actionHtml = `<div style="display: flex; gap: 4px;">`;
+      let actionHtml = `<div style="display: flex; gap: 4px;">`;
+      actionHtml += `<button class="secondary-action view-wo-btn" data-id="${order.id}" style="padding: 4px 8px; font-size: 12px;">查看</button>`;
+
+      if (showActions && (order.status === "Pending" || order.status === "In_Progress")) {
         if (order.status === "Pending") {
           actionHtml += `<button class="secondary-action wo-action-btn" data-action="start" data-id="${order.id}" style="padding: 4px 8px; font-size: 12px;" ${btnDisabled}>${btnText("開始")}</button>`;
         }
@@ -727,8 +795,8 @@ function renderWorkOrders() {
         if (state.role === "admin" || state.role === "manager") {
           actionHtml += `<button class="danger-action wo-action-btn" data-action="reject" data-id="${order.id}" style="padding: 4px 8px; font-size: 12px;" ${btnDisabled}>${btnText("拒絕")}</button>`;
         }
-        actionHtml += `</div>`;
       }
+      actionHtml += `</div>`;
 
       return `
         <tr>
@@ -830,7 +898,7 @@ function renderProducts() {
       <tr>
         <td><code>${row.bomId}</code></td>
         <td><code>${row.productId}</code></td>
-        <td><strong>${product.name}</strong></td>
+        <td><strong>${product.name}</strong><br/><button type="button" class="secondary-action show-aov-btn" data-id="${row.productId}" style="padding: 2px 6px; font-size: 11px; margin-top: 4px;">顯示 AOV 圖</button></td>
         <td><span class="status-pill ok">${formatAmount(product.stock || 0)} 件</span></td>
         <td><code>${product.moldId}</code></td>
         <td><span class="status-pill ${moldStatus === 'Idle' ? 'ok' : 'warn'}">${translateMoldStatus(moldStatus)}</span></td>
@@ -841,6 +909,62 @@ function renderProducts() {
       </tr>
     `;
   }).join("");
+}
+
+function renderAovGraphs() {
+  const container = $("#aovgraphs");
+  if (!container) return;
+
+  let html = `
+    <div class="panel table-panel">
+      <div class="panel-heading">
+        <div>
+          <p class="eyebrow">AOV 結構圖</p>
+          <h3 id="aovGraphsTitle">AOV Graphs</h3>
+        </div>
+        ${canWrite() ? '<button type="button" class="primary-action" onclick="showCreateAovModal()">新增 AOV Graph</button>' : ''}
+      </div>
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>ID</th>
+              <th>Product</th>
+              <th>Name</th>
+              <th>Version</th>
+              <th>Status</th>
+            </tr>
+          </thead>
+          <tbody>
+  `;
+
+  if (!state.aovGraphs || state.aovGraphs.length === 0) {
+    html += `<tr><td colspan="5" style="text-align:center;color:var(--muted)">目前無 AOV Graph 資料</td></tr>`;
+  } else {
+    html += state.aovGraphs.map(row => {
+      return `
+        <tr>
+          <td><code>${escapeHtml(String(row.id))}</code></td>
+          <td>${escapeHtml(String(row.productName || row.productId))}</td>
+          <td><strong>${escapeHtml(String(row.name))}</strong></td>
+          <td>v${escapeHtml(String(row.version))}</td>
+          <td>
+            <span class="status-pill ${row.status === 'Published' ? 'ok' : 'warn'}">${escapeHtml(String(row.status))}</span>
+            <button type="button" class="secondary-action" onclick="showAovGraphModal(${row.id})" style="padding: 2px 6px; font-size: 11px; margin-left: 4px;">查看</button>
+            ${canWrite() && (row.status === 'Draft' || row.status === 'DRAFT') ? `<button type="button" class="secondary-action" onclick="showEditAovModal(${row.id})" style="padding: 2px 6px; font-size: 11px; margin-left: 4px;">編輯</button><button type="button" class="secondary-action" onclick="validateAovGraph(${row.id})" style="padding: 2px 6px; font-size: 11px; margin-left: 4px;">驗證</button><button type="button" class="primary-action" onclick="publishAovGraph(${row.id})" style="padding: 2px 6px; font-size: 11px; margin-left: 4px; width: auto; display: inline-block;">發布</button>` : ''}
+          </td>
+        </tr>
+      `;
+    }).join("");
+  }
+
+  html += `
+          </tbody>
+        </table>
+      </div>
+    </div>
+  `;
+  container.innerHTML = html;
 }
 
 function renderLogs() {
@@ -884,10 +1008,11 @@ async function submitWorkOrder(event) {
 
   const quantity = Number($("#quantityInput").value || 0);
   const line = $("#lineSelect") ? $("#lineSelect").value : "L1";
-  const mold = getMold(product.moldId);
+  const moldId = $("#moldSelect") ? $("#moldSelect").value : null;
+  const mold = getMold(moldId);
 
   if (!mold || mold.status !== "Idle") {
-    addLog("WARN", `模具 ${product.moldId} 目前非閒置狀態，無法建立工單`);
+    addLog("WARN", `模具 ${moldId} 目前非閒置狀態，無法建立工單`);
     render();
     return;
   }
@@ -908,10 +1033,15 @@ async function submitWorkOrder(event) {
     product_id: product.id,
     quantity,
     line,
-    mold_id: product.moldId,
+    mold_id: moldId,
     creator_user_id: storedUser ? storedUser.user_id : null,
     creator_name: storedUser ? storedUser.user_id : null
   };
+  
+  const aovGraphSelect = $("#woAovGraphSelect");
+  if (aovGraphSelect && aovGraphSelect.value) {
+    payload.aov_graph_id = Number(aovGraphSelect.value);
+  }
 
   state.lastAutomation = { failedAt: -1, success: false };
   renderAutomationSteps(state.lastAutomation);
@@ -946,8 +1076,13 @@ async function handleWorkOrderAction(id, action) {
     await apiRequest("PUT", `/work-orders/${id}`, { action });
     addLog("INFO", `工單 ${id} 執行操作: ${action} 成功`);
     await refreshStateFromApi();
+    const modal = document.getElementById("workOrderModal");
+    if (modal && modal.open && document.getElementById("woModalTitle").textContent.includes(id)) {
+      showWorkOrderModal(id);
+    }
   } catch (error) {
     addLog("ERR", `工單 ${id} 操作失敗: ${error.message}`);
+    alert(`操作失敗: ${error.message}`);
   } finally {
     workOrderActionInProgress.delete(id);
     render();
@@ -1944,6 +2079,8 @@ function bindEvents() {
         const id = e.target.dataset.id;
         const action = e.target.dataset.action;
         handleWorkOrderAction(id, action);
+      } else if (e.target.classList.contains("view-wo-btn")) {
+        showWorkOrderModal(e.target.dataset.id);
       }
     });
   }
@@ -2053,3 +2190,655 @@ if (document.readyState === "loading") {
 } else {
   startApp();
 }
+
+
+// ============================================================
+// AOV (BOM GRAPH) USING MERMAID
+// ============================================================
+
+document.addEventListener('click', (e) => {
+  if (e.target.closest('.show-aov-btn')) {
+    const btn = e.target.closest('.show-aov-btn');
+    showAovModal(btn.dataset.id);
+  }
+});
+
+function showAovModal(productId) {
+  const product = getProduct(productId);
+  if (!product) return;
+
+  const modal = document.getElementById('aovModal');
+  const title = document.getElementById('aovModalTitle');
+  const content = document.getElementById('aovDiagramContent');
+
+  if (!modal || !title || !content) return;
+
+  title.textContent = `產品 BOM AOV 結構圖: ${product.name}`;
+
+  const bomRows = getBomForProduct(productId);
+
+  if (bomRows.length === 0) {
+    content.innerHTML = '<p style="color:var(--muted)">此產品無 BOM 資料，無法產生 AOV 圖。</p>';
+    modal.showModal();
+    return;
+  }
+
+  let mermaidGraph = `graph TD;\n`;
+
+  const pNodeId = `prod_${product.id.replace(/[^a-zA-Z0-9]/g, '_')}`;
+  mermaidGraph += `  ${pNodeId}("${product.name}<br/><small>${product.id}</small>");\n`;
+  mermaidGraph += `  style ${pNodeId} fill:#16a34a,stroke:#15803d,stroke-width:2px,color:#fff;\n\n`;
+
+  bomRows.forEach((row) => {
+    const mNodeId = `mat_${row.materialId.replace(/[^a-zA-Z0-9]/g, '_')}`;
+    mermaidGraph += `  ${mNodeId}(["${row.name}<br/><small>${row.materialId}</small><br/>需 ${formatAmount(row.amountPerUnit)} ${row.unit}"]);\n`;
+    mermaidGraph += `  ${pNodeId} -->|組成| ${mNodeId};\n`;
+  });
+
+  content.innerHTML = `<pre class="mermaid">\n${mermaidGraph}\n</pre>`;
+  modal.showModal();
+
+  setTimeout(() => {
+    if (window.mermaid) {
+      window.mermaid.init(undefined, content.querySelectorAll('.mermaid'));
+    }
+  }, 50);
+}
+
+async function showWorkOrderModal(woId) {
+  const wo = state.workOrders.find(w => w.id === woId);
+  if (!wo) return;
+
+  const modal = document.getElementById("workOrderModal");
+  if (!modal) return;
+
+  document.getElementById("woModalTitle").textContent = `Work Order 詳情: ${woId}`;
+  
+  const product = getProduct(wo.productId);
+  const productName = product ? product.name : wo.productId;
+
+  let completeActionHtml = "";
+  if (canWrite() && (wo.status === "Pending" || wo.status === "In_Progress")) {
+    completeActionHtml = `<div style="margin-top: 12px;"><button class="primary-action" onclick="handleWorkOrderAction('${wo.id}', 'complete')">完成工單</button></div>`;
+  }
+
+  document.getElementById("woModalBasicInfo").innerHTML = `
+    <p><strong>產品:</strong> ${escapeHtml(productName)}</p>
+    <p><strong>數量:</strong> ${wo.quantity}</p>
+    <p><strong>狀態:</strong> ${wo.status}</p>
+    ${completeActionHtml}
+  `;
+
+  const aovSection = document.getElementById("woModalAovSection");
+  const aovTbody = document.getElementById("woModalAovTasksBody");
+  const dagContent = document.getElementById("woModalDagContent");
+
+  if (wo.aovGraphId) {
+    aovSection.style.display = "block";
+    aovTbody.innerHTML = '<tr><td colspan="6" style="text-align:center;color:var(--muted)">載入中...</td></tr>';
+    dagContent.innerHTML = '<p style="color:var(--muted)">載入中...</p>';
+    modal.showModal();
+
+    // 1. Fetch tasks for table
+    try {
+      const { tasks } = await apiRequest("GET", `/work-orders/${woId}/tasks`);
+      
+      if (!tasks || tasks.length === 0) {
+        aovTbody.innerHTML = '<tr><td colspan="6" style="text-align:center;color:var(--muted)">無 Task 資料</td></tr>';
+      } else {
+        aovTbody.innerHTML = tasks.map(t => {
+          const statusClass = t.status === "COMPLETED" ? "ok" : (t.status === "RUNNING" ? "warn" : (t.status === "READY" ? "ok" : "bad"));
+          let actionHtml = '';
+          if (t.status === 'READY') {
+            actionHtml = `<button class="primary-action" style="padding: 2px 6px; font-size: 11px; width: auto;" onclick="startAovTask('${woId}', '${t.id}')">開始</button>`;
+          } else if (t.status === 'RUNNING') {
+            actionHtml = `<button class="primary-action" style="padding: 2px 6px; font-size: 11px; width: auto;" onclick="completeAovTask('${woId}', '${t.id}')">完成</button>`;
+          }
+          return `
+            <tr>
+              <td><code>${escapeHtml(String(t.id))}</code></td>
+              <td><code>${escapeHtml(String(t.node_key_snapshot || '-'))}</code></td>
+              <td>${escapeHtml(String(t.name_snapshot || '-'))}</td>
+              <td>${escapeHtml(String(t.duration_snapshot || '0'))}</td>
+              <td><span class="status-pill ${statusClass}">${escapeHtml(String(t.status))}</span></td>
+              <td>${actionHtml}</td>
+            </tr>
+          `;
+        }).join("");
+      }
+    } catch (err) {
+      aovTbody.innerHTML = `<tr><td colspan="6" style="text-align:center;color:var(--danger)">載入失敗: ${escapeHtml(err.message)}</td></tr>`;
+    }
+
+    // 2. Fetch graph for DAG
+    try {
+      const graphData = await apiRequest("GET", `/work-orders/${woId}/tasks/graph`);
+      const tasks = graphData.tasks || [];
+      const dependencies = graphData.dependencies || [];
+
+      if (tasks.length === 0) {
+        dagContent.innerHTML = '<p style="color:var(--muted)">無 Task 資料</p>';
+      } else {
+        let mermaidCode = 'graph TD;\n';
+        
+        tasks.forEach(t => {
+          const safeName = String(t.name_snapshot || '').replace(/["()[\]{}<>]/g, '');
+          const safeKey = String(t.node_key_snapshot || t.id).replace(/["()[\]{}<>]/g, '');
+          const status = t.status || 'UNKNOWN';
+          const nodeId = `task_${t.id}`;
+          
+          mermaidCode += `  ${nodeId}["${safeKey}<br/>${safeName}<br/>${status}"];\n`;
+          
+          if (status === 'COMPLETED') {
+            mermaidCode += `  style ${nodeId} fill:#16a34a,color:#fff,stroke:#15803d;\n`;
+          } else if (status === 'RUNNING') {
+            mermaidCode += `  style ${nodeId} fill:#f59e0b,color:#fff,stroke:#d97706;\n`;
+          } else if (status === 'READY') {
+            mermaidCode += `  style ${nodeId} fill:#3b82f6,color:#fff,stroke:#2563eb;\n`;
+          } else {
+            // LOCKED or other
+            mermaidCode += `  style ${nodeId} fill:#f3f4f6,color:#6b7280,stroke:#d1d5db;\n`;
+          }
+        });
+
+        dependencies.forEach(d => {
+          mermaidCode += `  task_${d.prerequisite_task_id} --> task_${d.task_id};\n`;
+        });
+
+        dagContent.innerHTML = `<pre class="mermaid">\n${mermaidCode}\n</pre>`;
+
+        setTimeout(() => {
+          if (window.mermaid) {
+            window.mermaid.init(undefined, dagContent.querySelectorAll('.mermaid'));
+          }
+        }, 50);
+      }
+    } catch (err) {
+      dagContent.innerHTML = `<p style="color:var(--danger)">DAG 載入失敗: ${escapeHtml(err.message)}</p>`;
+    }
+
+  } else {
+    aovSection.style.display = "none";
+    modal.showModal();
+  }
+}
+
+async function startAovTask(woId, taskId) {
+  try {
+    await apiRequest("POST", `/work-orders/${woId}/tasks/${taskId}/start`);
+    addLog("INFO", `成功開始 Task ${taskId}`);
+    showWorkOrderModal(woId);
+  } catch (err) {
+    alert(`開始 Task 失敗: ${err.message}`);
+    addLog("ERR", `開始 Task 失敗: ${err.message}`);
+  }
+}
+
+async function completeAovTask(woId, taskId) {
+  if (!confirm("確定要完成此 Task？")) return;
+  try {
+    await apiRequest("POST", `/work-orders/${woId}/tasks/${taskId}/complete`);
+    addLog("INFO", `成功完成 Task ${taskId}`);
+    showWorkOrderModal(woId);
+  } catch (err) {
+    alert(`完成 Task 失敗: ${err.message}`);
+    addLog("ERR", `完成 Task 失敗: ${err.message}`);
+  }
+}
+
+let createAovNodes = [];
+let createAovEdges = [];
+
+function showCreateAovModal() {
+  const modal = document.getElementById("createAovModal");
+  const form = document.getElementById("createAovForm");
+  const select = document.getElementById("aovGraphProduct");
+  if (!modal || !form || !select) return;
+  
+  form.reset();
+  select.innerHTML = '<option value="">（請選擇）</option>' + state.products.map(p => 
+    `<option value="${escapeHtml(String(p.id))}">${escapeHtml(String(p.name))} (${escapeHtml(String(p.id))})</option>`
+  ).join("");
+  
+  createAovNodes = [];
+  createAovEdges = [];
+  renderCreateAovNodes();
+  renderCreateAovEdges();
+  updateEdgeDropdowns();
+  
+  document.getElementById("aovNodeKey").value = "";
+  document.getElementById("aovNodeName").value = "";
+  document.getElementById("aovNodeDuration").value = "0";
+
+  modal.showModal();
+}
+
+function renderCreateAovNodes() {
+  const tbody = document.getElementById("aovNodeListBody");
+  if (!tbody) return;
+  
+  if (createAovNodes.length === 0) {
+    tbody.innerHTML = '<tr><td colspan="4" style="text-align:center;color:var(--muted)">尚未新增 Node</td></tr>';
+    return;
+  }
+  
+  tbody.innerHTML = createAovNodes.map((n, i) => `
+    <tr>
+      <td><code>${escapeHtml(n.key)}</code></td>
+      <td>${escapeHtml(n.name)}</td>
+      <td>${escapeHtml(String(n.duration))}</td>
+      <td>
+        <button type="button" class="danger-action" onclick="removeCreateAovNode(${i})" style="padding: 2px 6px; font-size: 11px;">刪除</button>
+      </td>
+    </tr>
+  `).join("");
+}
+
+function removeCreateAovNode(index) {
+  const nodeKey = createAovNodes[index].key;
+  createAovNodes.splice(index, 1);
+  createAovEdges = createAovEdges.filter(e => e.source !== nodeKey && e.target !== nodeKey);
+  
+  renderCreateAovNodes();
+  renderCreateAovEdges();
+  updateEdgeDropdowns();
+}
+
+function updateEdgeDropdowns() {
+  const sourceSel = document.getElementById("aovEdgeSource");
+  const targetSel = document.getElementById("aovEdgeTarget");
+  if (!sourceSel || !targetSel) return;
+  
+  const options = '<option value="">（請選擇）</option>' + createAovNodes.map(n => 
+    `<option value="${escapeHtml(n.key)}">${escapeHtml(n.name)} (${escapeHtml(n.key)})</option>`
+  ).join("");
+  
+  sourceSel.innerHTML = options;
+  targetSel.innerHTML = options;
+}
+
+function renderCreateAovEdges() {
+  const tbody = document.getElementById("aovEdgeListBody");
+  if (!tbody) return;
+  
+  if (createAovEdges.length === 0) {
+    tbody.innerHTML = '<tr><td colspan="3" style="text-align:center;color:var(--muted)">尚未新增 Edge</td></tr>';
+    return;
+  }
+  
+  tbody.innerHTML = createAovEdges.map((e, i) => `
+    <tr>
+      <td><code>${escapeHtml(e.source)}</code></td>
+      <td><code>${escapeHtml(e.target)}</code></td>
+      <td>
+        <button type="button" class="danger-action" onclick="removeCreateAovEdge(${i})" style="padding: 2px 6px; font-size: 11px;">刪除</button>
+      </td>
+    </tr>
+  `).join("");
+}
+
+function removeCreateAovEdge(index) {
+  createAovEdges.splice(index, 1);
+  renderCreateAovEdges();
+}
+
+document.addEventListener("click", (e) => {
+  if (e.target.id === "aovAddNodeBtn") {
+    const keyInput = document.getElementById("aovNodeKey");
+    const nameInput = document.getElementById("aovNodeName");
+    const durInput = document.getElementById("aovNodeDuration");
+    
+    const key = (keyInput.value || "").trim();
+    const name = (nameInput.value || "").trim();
+    const duration = parseFloat(durInput.value);
+    
+    if (!key) return alert("Node Key 不可空白");
+    if (createAovNodes.some(n => n.key === key)) return alert("Node Key 不可重複");
+    if (!name) return alert("Node Name 不可空白");
+    if (isNaN(duration) || duration < 0) return alert("Duration 必須大於等於 0");
+    
+    createAovNodes.push({ key, name, duration });
+    renderCreateAovNodes();
+    updateEdgeDropdowns();
+    
+    keyInput.value = "";
+    nameInput.value = "";
+    durInput.value = "0";
+  } else if (e.target.id === "aovAddEdgeBtn") {
+    const sourceSel = document.getElementById("aovEdgeSource");
+    const targetSel = document.getElementById("aovEdgeTarget");
+    const source = sourceSel.value;
+    const target = targetSel.value;
+    
+    if (!source) return alert("Source 必須選擇");
+    if (!target) return alert("Target 必須選擇");
+    if (source === target) return alert("Source 不可等於 Target");
+    if (createAovEdges.some(e => e.source === source && e.target === target)) return alert("不可建立完全相同的重複 Edge");
+    if (!createAovNodes.some(n => n.key === source) || !createAovNodes.some(n => n.key === target)) return alert("Source / Target 必須存在於目前 Node 列表");
+    
+    createAovEdges.push({ source, target });
+    renderCreateAovEdges();
+    
+    sourceSel.value = "";
+    targetSel.value = "";
+  }
+});
+
+document.addEventListener("submit", async (e) => {
+  if (e.target.id === "createAovForm") {
+    e.preventDefault();
+    const formData = new FormData(e.target);
+    const formProps = Object.fromEntries(formData.entries());
+    
+    const payload = {
+      product_id: formProps.productId,
+      name: formProps.name,
+      version: Number(formProps.version),
+      nodes: createAovNodes.map(n => ({
+        node_key: n.key,
+        name: n.name,
+        duration: n.duration
+      })),
+      edges: createAovEdges.map(e => ({
+        from: e.source,
+        to: e.target
+      }))
+    };
+    
+    try {
+      await apiRequest("POST", "/aov-graphs", payload);
+      alert("AOV Graph 建立成功！");
+      document.getElementById("createAovModal").close();
+      
+      createAovNodes = [];
+      createAovEdges = [];
+      
+      await refreshStateFromApi();
+      renderAovGraphs();
+    } catch (err) {
+      alert("建立失敗: " + (err.message || err.toString()));
+    }
+  } else if (e.target.id === "editAovForm") {
+    e.preventDefault();
+    const formData = new FormData(e.target);
+    const formProps = Object.fromEntries(formData.entries());
+    const graphId = document.getElementById("editAovGraphId").value;
+    
+    const payload = {
+      product_id: formProps.productId,
+      name: formProps.name,
+      version: Number(formProps.version),
+      nodes: editAovNodes.map(n => ({
+        node_key: n.key,
+        name: n.name,
+        duration: n.duration
+      })),
+      edges: editAovEdges.map(e => ({
+        from: e.source,
+        to: e.target
+      }))
+    };
+    
+    try {
+      await apiRequest("PUT", `/aov-graphs/${graphId}`, payload);
+      alert("AOV Graph 更新成功！");
+      document.getElementById("editAovModal").close();
+      
+      editAovNodes = [];
+      editAovEdges = [];
+      
+      await refreshStateFromApi();
+      renderAovGraphs();
+    } catch (err) {
+      alert("更新失敗: " + (err.message || err.toString()));
+    }
+  }
+});
+
+document.addEventListener("click", (e) => {
+  if (e.target.id === "editAovAddNodeBtn") {
+    const keyInput = document.getElementById("editAovNodeKey");
+    const nameInput = document.getElementById("editAovNodeName");
+    const durInput = document.getElementById("editAovNodeDuration");
+    
+    const key = (keyInput.value || "").trim();
+    const name = (nameInput.value || "").trim();
+    const duration = parseFloat(durInput.value);
+    
+    if (!key) return alert("Node Key 不可空白");
+    if (editAovNodes.some(n => n.key === key)) return alert("Node Key 不可重複");
+    if (!name) return alert("Node Name 不可空白");
+    if (isNaN(duration) || duration < 0) return alert("Duration 必須大於等於 0");
+    
+    editAovNodes.push({ key, name, duration });
+    renderEditAovNodes();
+    updateEditEdgeDropdowns();
+    
+    keyInput.value = "";
+    nameInput.value = "";
+    durInput.value = "0";
+  } else if (e.target.id === "editAovAddEdgeBtn") {
+    const sourceSel = document.getElementById("editAovEdgeSource");
+    const targetSel = document.getElementById("editAovEdgeTarget");
+    const source = sourceSel.value;
+    const target = targetSel.value;
+    
+    if (!source) return alert("Source 必須選擇");
+    if (!target) return alert("Target 必須選擇");
+    if (source === target) return alert("Source 不可等於 Target");
+    if (editAovEdges.some(e => e.source === source && e.target === target)) return alert("不可建立完全相同的重複 Edge");
+    if (!editAovNodes.some(n => n.key === source) || !editAovNodes.some(n => n.key === target)) return alert("Source / Target 必須存在於目前 Node 列表");
+    
+    editAovEdges.push({ source, target });
+    renderEditAovEdges();
+    
+    sourceSel.value = "";
+    targetSel.value = "";
+  }
+});
+
+let editAovNodes = [];
+let editAovEdges = [];
+
+async function showAovGraphModal(graphId) {
+  try {
+    const data = await apiRequest("GET", `/aov-graphs/${graphId}`);
+    if (!data || !data.graph) {
+      alert("無法取得 AOV Graph 資料");
+      return;
+    }
+
+    const { graph, nodes = [], edges = [] } = data;
+
+    document.getElementById("viewAovName").textContent = graph.name || "";
+    document.getElementById("viewAovVersion").textContent = "v" + (graph.version || 1);
+    document.getElementById("viewAovProduct").textContent = graph.product_id || "";
+    document.getElementById("viewAovStatus").textContent = graph.status || "";
+    document.getElementById("viewAovNodesCount").textContent = nodes.length;
+    document.getElementById("viewAovEdgesCount").textContent = edges.length;
+
+    const content = document.getElementById("viewAovDiagramContent");
+    
+    if (nodes.length === 0) {
+      content.innerHTML = '<p style="color:var(--muted)">此 Graph 尚無 Node 資料</p>';
+    } else {
+      let mermaidGraph = 'graph TD;\n';
+      
+      nodes.forEach(node => {
+        const safeId = "N_" + node.id;
+        const safeKey = escapeHtml(String(node.node_key)).replace(/"/g, '');
+        const safeName = escapeHtml(String(node.name)).replace(/"/g, '');
+        const safeDuration = escapeHtml(String(node.duration || 0));
+        
+        mermaidGraph += `  ${safeId}("${safeKey}<br/><small>${safeName}</small><br/>需 ${safeDuration} 分");\n`;
+      });
+      
+      edges.forEach(edge => {
+        const fromSafeId = "N_" + edge.from_node_id;
+        const toSafeId = "N_" + edge.to_node_id;
+        mermaidGraph += `  ${fromSafeId} --> ${toSafeId};\n`;
+      });
+      
+      content.innerHTML = `<pre class="mermaid">\n${mermaidGraph}\n</pre>`;
+      
+      if (window.mermaid) {
+        window.mermaid.init(undefined, content.querySelectorAll('.mermaid'));
+      }
+    }
+
+    document.getElementById("viewAovModal").showModal();
+  } catch (err) {
+    console.error("View AOV Graph failed", err);
+    alert("讀取 AOV Graph 失敗: " + (err.message || String(err)));
+  }
+}
+
+async function showEditAovModal(graphId) {
+  const modal = document.getElementById("editAovModal");
+  const form = document.getElementById("editAovForm");
+  const select = document.getElementById("editAovGraphProduct");
+  if (!modal || !form || !select) return;
+
+  setLoading(true);
+  try {
+    const data = await apiRequest("GET", `/aov-graphs/${graphId}`);
+    if (data.graph.status !== "Draft" && data.graph.status !== "DRAFT") {
+      alert("只能編輯 Draft 狀態的 AOV Graph");
+      return;
+    }
+    
+    form.reset();
+    select.innerHTML = '<option value="">（請選擇）</option>' + state.products.map(p => 
+      `<option value="${escapeHtml(String(p.id))}" ${p.id === data.graph.product_id ? 'selected' : ''}>${escapeHtml(String(p.name))} (${escapeHtml(String(p.id))})</option>`
+    ).join("");
+    
+    document.getElementById("editAovGraphId").value = data.graph.id;
+    document.getElementById("editAovGraphName").value = data.graph.name;
+    document.getElementById("editAovGraphVersion").value = data.graph.version;
+    
+    editAovNodes = data.nodes.map(n => ({
+      key: n.node_key,
+      name: n.name,
+      duration: n.duration
+    }));
+    
+    const nodeById = new Map(data.nodes.map(n => [n.id, n.node_key]));
+    editAovEdges = data.edges.map(e => ({
+      source: nodeById.get(e.from_node_id),
+      target: nodeById.get(e.to_node_id)
+    }));
+    
+    renderEditAovNodes();
+    renderEditAovEdges();
+    updateEditEdgeDropdowns();
+    
+    document.getElementById("editAovNodeKey").value = "";
+    document.getElementById("editAovNodeName").value = "";
+    document.getElementById("editAovNodeDuration").value = "0";
+
+    modal.showModal();
+  } catch (err) {
+    alert("載入失敗: " + (err.message || err.toString()));
+  } finally {
+    setLoading(false);
+  }
+}
+
+function renderEditAovNodes() {
+  const tbody = document.getElementById("editAovNodeListBody");
+  if (!tbody) return;
+  if (editAovNodes.length === 0) {
+    tbody.innerHTML = '<tr><td colspan="4" style="text-align:center;color:var(--muted)">尚未新增 Node</td></tr>';
+    return;
+  }
+  tbody.innerHTML = editAovNodes.map((n, i) => `
+    <tr>
+      <td><code>${escapeHtml(n.key)}</code></td>
+      <td>${escapeHtml(n.name)}</td>
+      <td>${escapeHtml(String(n.duration))}</td>
+      <td>
+        <button type="button" class="danger-action" onclick="removeEditAovNode(${i})" style="padding: 2px 6px; font-size: 11px;">刪除</button>
+      </td>
+    </tr>
+  `).join("");
+}
+
+function removeEditAovNode(index) {
+  const nodeKey = editAovNodes[index].key;
+  editAovNodes.splice(index, 1);
+  editAovEdges = editAovEdges.filter(e => e.source !== nodeKey && e.target !== nodeKey);
+  renderEditAovNodes();
+  renderEditAovEdges();
+  updateEditEdgeDropdowns();
+}
+
+function updateEditEdgeDropdowns() {
+  const sourceSel = document.getElementById("editAovEdgeSource");
+  const targetSel = document.getElementById("editAovEdgeTarget");
+  if (!sourceSel || !targetSel) return;
+  const options = '<option value="">（請選擇）</option>' + editAovNodes.map(n => 
+    `<option value="${escapeHtml(n.key)}">${escapeHtml(n.name)} (${escapeHtml(n.key)})</option>`
+  ).join("");
+  sourceSel.innerHTML = options;
+  targetSel.innerHTML = options;
+}
+
+function renderEditAovEdges() {
+  const tbody = document.getElementById("editAovEdgeListBody");
+  if (!tbody) return;
+  if (editAovEdges.length === 0) {
+    tbody.innerHTML = '<tr><td colspan="3" style="text-align:center;color:var(--muted)">尚未新增 Edge</td></tr>';
+    return;
+  }
+  tbody.innerHTML = editAovEdges.map((e, i) => `
+    <tr>
+      <td><code>${escapeHtml(e.source)}</code></td>
+      <td><code>${escapeHtml(e.target)}</code></td>
+      <td>
+        <button type="button" class="danger-action" onclick="removeEditAovEdge(${i})" style="padding: 2px 6px; font-size: 11px;">刪除</button>
+      </td>
+    </tr>
+  `).join("");
+}
+
+function removeEditAovEdge(index) {
+  editAovEdges.splice(index, 1);
+  renderEditAovEdges();
+}
+
+async function validateAovGraph(graphId) {
+  setLoading(true);
+  try {
+    const result = await apiRequest("POST", `/aov-graphs/${graphId}/validate`);
+    if (result.valid) {
+      alert(`驗證成功！\n執行順序 (Topological Order): ${result.topological_order.join(" -> ")}`);
+    } else {
+      alert("驗證完成");
+    }
+    await refreshStateFromApi();
+    renderAovGraphs();
+  } catch (err) {
+    alert("驗證失敗: " + (err.message || err.toString()));
+  } finally {
+    setLoading(false);
+  }
+}
+
+async function publishAovGraph(graphId) {
+  if (!confirm("確定要發布此 AOV Graph？發布後將無法修改。")) {
+    return;
+  }
+  
+  setLoading(true);
+  try {
+    await apiRequest("POST", `/aov-graphs/${graphId}/publish`);
+    alert("發布成功！");
+    await refreshStateFromApi();
+    renderAovGraphs();
+  } catch (err) {
+    alert("發布失敗: " + (err.message || err.toString()));
+  } finally {
+    setLoading(false);
+  }
+}
+

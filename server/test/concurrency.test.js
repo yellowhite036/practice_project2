@@ -1,10 +1,9 @@
 const test = require("node:test");
 const assert = require("node:assert/strict");
 const http = require("node:http");
-const fs = require("node:fs/promises");
-const path = require("node:path");
 const { Pool } = require("pg");
 const jwt = require("jsonwebtoken");
+const { migrateTestDatabase } = require("./utils/migrateTestDatabase");
 
 const DB_HOST = process.env.TEST_DB_HOST || "localhost";
 const DB_PORT = process.env.TEST_DB_PORT || "5432";
@@ -105,15 +104,7 @@ function request(appInstance, method, requestPath, body, options = {}) {
 }
 
 async function runMigration() {
-  const sql = await fs.readFile(
-    path.join(
-      __dirname,
-      "../../db/migrations/001_create_initial_schema.sql"
-    ),
-    "utf8"
-  );
-
-  await pool.query(sql);
+  await migrateTestDatabase(pool);
 }
 
 async function checkDatabaseAvailable() {

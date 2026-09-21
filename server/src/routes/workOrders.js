@@ -2,6 +2,8 @@ const { Router } = require("express");
 const { createHttpError } = require("../middleware/errorHandler");
 const { requireAuth, requireRole } = require("../middleware/auth");
 const withTransaction = require("../db/withTransaction");
+const { loadGraph, validateGraph } = require("../services/aovGraphService");
+const { createTaskSnapshot } = require("../services/workOrderTaskService");
 
 const asyncRoute = (handler) => (req, res, next) => {
   Promise.resolve(handler(req, res, next)).catch(next);
@@ -16,6 +18,7 @@ const WORK_ORDER_COLUMNS = `
   status,
   creator_user_id,
   creator_name,
+  aov_graph_id,
   created_at,
   updated_at
 `;
@@ -222,6 +225,17 @@ module.exports = function createWorkOrdersRouter(pool) {
           409,
           `Cannot complete work order: current status is '${wo.status}', expected 'Pending' or 'In_Progress'`
         );
+      }
+
+      if (wo.aov_graph_id) {
+        const incomplete = await client.query(
+          `SELECT 1 FROM work_order_tasks
+           WHERE work_order_id = $1 AND status <> 'COMPLETED' LIMIT 1`,
+          [workOrderId]
+        );
+        if (incomplete.rows.length > 0) {
+          throw createHttpError(409, "Cannot complete AOV work order before all tasks are completed");
+        }
       }
 
       /*
@@ -599,7 +613,8 @@ module.exports = function createWorkOrdersRouter(pool) {
         line,
         mold_id,
         creator_user_id = null,
-        creator_name = null
+        creator_name = null,
+        aov_graph_id = null
       } = req.body;
 
       const workOrder = await tx(async (client) => {
@@ -615,6 +630,21 @@ module.exports = function createWorkOrdersRouter(pool) {
 
         if (productResult.rows.length === 0) {
           throw createHttpError(400, "Product not found");
+        }
+
+        let aovGraph = null;
+        if (aov_graph_id !== null && aov_graph_id !== undefined) {
+          if (!Number.isInteger(Number(aov_graph_id)) || Number(aov_graph_id) <= 0) {
+            throw createHttpError(400, "aov_graph_id must be a positive integer");
+          }
+          aovGraph = await loadGraph(client, Number(aov_graph_id), { forUpdate: true });
+          if (aovGraph.graph.status !== "Published") {
+            throw createHttpError(409, "AOV graph must be Published");
+          }
+          if (aovGraph.graph.product_id !== product_id) {
+            throw createHttpError(400, "AOV graph product_id does not match work order product_id");
+          }
+          validateGraph(aovGraph.graph, aovGraph.nodes, aovGraph.edges);
         }
 
         /*
@@ -737,9 +767,10 @@ module.exports = function createWorkOrdersRouter(pool) {
              mold_id,
              status,
              creator_user_id,
-             creator_name
+             creator_name,
+             aov_graph_id
            )
-           VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
            RETURNING ${WORK_ORDER_COLUMNS}`,
           [
             work_order_id,
@@ -749,7 +780,8 @@ module.exports = function createWorkOrdersRouter(pool) {
             mold_id,
             "Pending",
             creator_user_id,
-            creator_name
+            creator_name,
+            aovGraph ? aovGraph.graph.id : null
           ]
         );
 
@@ -808,6 +840,10 @@ module.exports = function createWorkOrdersRouter(pool) {
             creator_user_id
           ]
         );
+
+        if (aovGraph) {
+          await createTaskSnapshot(client, work_order_id, aovGraph.graph.id);
+        }
 
         return woResult.rows[0];
       });

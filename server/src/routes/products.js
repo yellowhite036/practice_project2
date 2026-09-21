@@ -9,8 +9,6 @@ const asyncRoute = (handler) => (req, res, next) => {
 const PRODUCT_COLUMNS = `
   product_id,
   name,
-  cycle_minutes,
-  mold_id,
   stock,
   version,
   created_at,
@@ -19,7 +17,6 @@ const PRODUCT_COLUMNS = `
 
 function validateProduct(body) {
   if (!body.name) return "name is required";
-  if (body.cycle_minutes === undefined || Number(body.cycle_minutes) <= 0) return "cycle_minutes must be greater than 0";
   if (body.stock !== undefined && Number(body.stock) < 0) return "stock must be greater than or equal to 0";
   return null;
 }
@@ -45,14 +42,14 @@ module.exports = function createProductsRouter(pool) {
     const error = validateProduct(req.body);
     if (error) throw createHttpError(400, error);
 
-    const { product_id, name, cycle_minutes, mold_id = null, stock = 0 } = req.body;
+    const { product_id, name, stock = 0 } = req.body;
     if (!product_id) throw createHttpError(400, "product_id is required");
 
     const { rows } = await pool.query(
-      `INSERT INTO products (product_id, name, cycle_minutes, mold_id, stock)
-       VALUES ($1, $2, $3, $4, $5)
+      `INSERT INTO products (product_id, name, stock)
+       VALUES ($1, $2, $3)
        RETURNING ${PRODUCT_COLUMNS}`,
-      [product_id, name, cycle_minutes, mold_id, stock]
+      [product_id, name, stock]
     );
     res.status(201).json(rows[0]);
   }));
@@ -62,13 +59,13 @@ module.exports = function createProductsRouter(pool) {
     if (error) throw createHttpError(400, error);
     if (req.body.version === undefined) throw createHttpError(400, "version is required");
 
-    const { name, cycle_minutes, mold_id = null, stock = 0, version } = req.body;
+    const { name, stock = 0, version } = req.body;
     const { rows } = await pool.query(
       `UPDATE products
-       SET name = $1, cycle_minutes = $2, mold_id = $3, stock = $4, version = version + 1, updated_at = now()
-       WHERE product_id = $5 AND version = $6
+       SET name = $1, stock = $2, version = version + 1, updated_at = now()
+       WHERE product_id = $3 AND version = $4
        RETURNING ${PRODUCT_COLUMNS}`,
-      [name, cycle_minutes, mold_id, stock, req.params.id, version]
+      [name, stock, req.params.id, version]
     );
     if (rows.length === 0) throw createHttpError(409, "Optimistic lock conflict or resource not found");
     res.json(rows[0]);

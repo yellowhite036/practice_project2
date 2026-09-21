@@ -217,6 +217,7 @@
       cursor: not-allowed;
     }
   </style>
+  <script src="https://cdn.jsdelivr.net/npm/mermaid/dist/mermaid.min.js"></script>
 </head>
 
 <body>
@@ -262,6 +263,7 @@
         <button class="nav-button admin-only" data-view="autoorders" type="button">自動下單</button>
         <button class="nav-button admin-only" data-view="molds" type="button">產線與模具管理</button>
         <button class="nav-button admin-only" data-view="products" type="button">產品 BOM</button>
+        <button class="nav-button admin-only" data-view="aovgraphs" type="button">AOV Graphs</button>
         <button class="nav-button admin-only" data-view="logs" type="button">系統紀錄</button>
       </nav>
     </aside>
@@ -343,6 +345,13 @@
                 <option value="urgent">急單</option>
                 <option value="normal" selected>一般</option>
                 <option value="low">低</option>
+              </select>
+            </label>
+
+            <label>
+              AOV Graph
+              <select id="woAovGraphSelect" name="aov_graph_id">
+                <option value="">不使用 AOV Graph</option>
               </select>
             </label>
 
@@ -504,6 +513,8 @@
         </div>
       </section>
 
+      <section id="aovgraphs" class="view" aria-labelledby="aovGraphsTitle"></section>
+
       <section id="logs" class="view" aria-labelledby="logsTitle">
         <div class="panel table-panel">
           <div class="panel-heading">
@@ -595,6 +606,235 @@
         <button type="submit" class="primary-action" style="width: auto;">儲存</button>
       </div>
     </form>
+  </dialog>
+
+  <dialog id="createAovModal">
+    <form id="createAovForm" class="dialog-content">
+      <h3>新增 AOV Graph</h3>
+      <div class="form-grid" style="margin-top: 16px;">
+        <label>Graph Name <span style="color:var(--danger)">*</span><input type="text" id="aovGraphName" name="name" required /></label>
+        <label>Version <span style="color:var(--danger)">*</span><input type="number" id="aovGraphVersion" name="version" value="1" min="1" required /></label>
+        <label>Product <span style="color:var(--danger)">*</span>
+          <select id="aovGraphProduct" name="productId" required>
+            <option value="">（請選擇）</option>
+          </select>
+        </label>
+      </div>
+      
+      <hr style="margin: 20px 0; border: none; border-top: 1px solid var(--border-color);" />
+      <h4>Nodes 編輯區</h4>
+      <div class="form-grid" style="margin-top: 8px;">
+        <label>Node Key<input type="text" id="aovNodeKey" placeholder="例如: TASK_A" /></label>
+        <label>Node Name<input type="text" id="aovNodeName" placeholder="例如: 準備材料" /></label>
+        <label>Duration (分)<input type="number" id="aovNodeDuration" min="0" value="0" /></label>
+      </div>
+      <button type="button" id="aovAddNodeBtn" class="secondary-action" style="margin-top: 8px; width: auto;">新增 Node</button>
+      
+      <div style="margin-top: 16px;">
+        <table class="data-table">
+          <thead>
+            <tr>
+              <th>Key</th>
+              <th>Name</th>
+              <th>Duration</th>
+              <th>操作</th>
+            </tr>
+          </thead>
+          <tbody id="aovNodeListBody">
+            <tr><td colspan="4" style="text-align:center;color:var(--muted)">尚未新增 Node</td></tr>
+          </tbody>
+        </table>
+      </div>
+      
+      <hr style="margin: 20px 0; border: none; border-top: 1px solid var(--border-color);" />
+      <h4>Edges 編輯區</h4>
+      <div class="form-grid" style="margin-top: 8px;">
+        <label>Source Node
+          <select id="aovEdgeSource">
+            <option value="">（請選擇）</option>
+          </select>
+        </label>
+        <label>Target Node
+          <select id="aovEdgeTarget">
+            <option value="">（請選擇）</option>
+          </select>
+        </label>
+      </div>
+      <button type="button" id="aovAddEdgeBtn" class="secondary-action" style="margin-top: 8px; width: auto;">新增 Edge</button>
+      
+      <div style="margin-top: 16px;">
+        <table class="data-table">
+          <thead>
+            <tr>
+              <th>Source</th>
+              <th>Target</th>
+              <th>操作</th>
+            </tr>
+          </thead>
+          <tbody id="aovEdgeListBody">
+            <tr><td colspan="3" style="text-align:center;color:var(--muted)">尚未新增 Edge</td></tr>
+          </tbody>
+        </table>
+      </div>
+
+      <div class="dialog-actions" style="margin-top: 24px;">
+        <button type="button" class="secondary-action close-modal-btn">取消</button>
+        <button type="submit" class="primary-action" style="width: auto;">建立</button>
+      </div>
+    </form>
+  </dialog>
+
+  <dialog id="editAovModal">
+    <form id="editAovForm" class="dialog-content">
+      <h3>編輯 Draft AOV Graph</h3>
+      <input type="hidden" id="editAovGraphId" name="graphId" />
+      <div class="form-grid" style="margin-top: 16px;">
+        <label>Graph Name <span style="color:var(--danger)">*</span><input type="text" id="editAovGraphName" name="name" required /></label>
+        <label>Version <span style="color:var(--danger)">*</span><input type="number" id="editAovGraphVersion" name="version" min="1" required /></label>
+        <label>Product <span style="color:var(--danger)">*</span>
+          <select id="editAovGraphProduct" name="productId" required>
+            <option value="">（請選擇）</option>
+          </select>
+        </label>
+      </div>
+      
+      <hr style="margin: 20px 0; border: none; border-top: 1px solid var(--border-color);" />
+      <h4>Nodes 編輯區</h4>
+      <div class="form-grid" style="margin-top: 8px;">
+        <label>Node Key<input type="text" id="editAovNodeKey" placeholder="例如: TASK_A" /></label>
+        <label>Node Name<input type="text" id="editAovNodeName" placeholder="例如: 準備材料" /></label>
+        <label>Duration (分)<input type="number" id="editAovNodeDuration" min="0" value="0" /></label>
+      </div>
+      <button type="button" id="editAovAddNodeBtn" class="secondary-action" style="margin-top: 8px; width: auto;">新增 Node</button>
+      
+      <div style="margin-top: 16px;">
+        <table class="data-table">
+          <thead>
+            <tr>
+              <th>Key</th>
+              <th>Name</th>
+              <th>Duration</th>
+              <th>操作</th>
+            </tr>
+          </thead>
+          <tbody id="editAovNodeListBody">
+            <tr><td colspan="4" style="text-align:center;color:var(--muted)">尚未新增 Node</td></tr>
+          </tbody>
+        </table>
+      </div>
+      
+      <hr style="margin: 20px 0; border: none; border-top: 1px solid var(--border-color);" />
+      <h4>Edges 編輯區</h4>
+      <div class="form-grid" style="margin-top: 8px;">
+        <label>Source Node
+          <select id="editAovEdgeSource">
+            <option value="">（請選擇）</option>
+          </select>
+        </label>
+        <label>Target Node
+          <select id="editAovEdgeTarget">
+            <option value="">（請選擇）</option>
+          </select>
+        </label>
+      </div>
+      <button type="button" id="editAovAddEdgeBtn" class="secondary-action" style="margin-top: 8px; width: auto;">新增 Edge</button>
+      
+      <div style="margin-top: 16px;">
+        <table class="data-table">
+          <thead>
+            <tr>
+              <th>Source</th>
+              <th>Target</th>
+              <th>操作</th>
+            </tr>
+          </thead>
+          <tbody id="editAovEdgeListBody">
+            <tr><td colspan="3" style="text-align:center;color:var(--muted)">尚未新增 Edge</td></tr>
+          </tbody>
+        </table>
+      </div>
+
+      <div class="dialog-actions" style="margin-top: 24px;">
+        <button type="button" class="secondary-action close-modal-btn">取消</button>
+        <button type="submit" class="primary-action" style="width: auto;">儲存</button>
+      </div>
+    </form>
+  </dialog>
+
+  <dialog id="workOrderModal">
+    <div class="dialog-content" style="width: 600px; max-width: 90vw;">
+      <h3 id="woModalTitle">Work Order 詳情</h3>
+      
+      <div id="woModalBasicInfo" style="margin-bottom: 16px;">
+      </div>
+
+      <div id="woModalAovSection" style="display: none; border-top: 1px solid var(--border-color); padding-top: 16px;">
+        <h4>AOV Tasks</h4>
+        <div class="table-wrap">
+          <table class="data-table">
+            <thead>
+              <tr>
+                <th>Task ID</th>
+                <th>Node Key</th>
+                <th>Task Name</th>
+                <th>Duration (分)</th>
+                <th>Status</th>
+                <th>Action</th>
+              </tr>
+            </thead>
+            <tbody id="woModalAovTasksBody">
+              <tr><td colspan="6" style="text-align:center;color:var(--muted)">載入中...</td></tr>
+            </tbody>
+          </table>
+        </div>
+        <div id="woModalDagSection" style="margin-top: 24px;">
+          <h4>Task DAG</h4>
+          <div id="woModalDagContent" style="background: white; padding: 16px; border: 1px solid var(--border-color); border-radius: 8px; text-align: center; overflow: auto; min-height: 200px;">
+            <p style="color:var(--muted)">載入中...</p>
+          </div>
+        </div>
+      </div>
+
+      <div class="dialog-actions" style="margin-top: 24px;">
+        <button type="button" class="secondary-action" onclick="document.getElementById('workOrderModal').close()">關閉</button>
+      </div>
+    </div>
+  </dialog>
+
+  <!-- View AOV Modal -->
+  <dialog id="viewAovModal">
+    <div class="question-modal-header">
+      <h3 id="viewAovModalTitle">查看 AOV Graph</h3>
+      <button type="button" class="question-minimize-btn" onclick="document.getElementById('viewAovModal').close()" aria-label="關閉">
+        <span class="minimize-icon"></span>
+      </button>
+    </div>
+    <div class="dialog-content" style="background: white; padding: 16px; min-width: 600px; min-height: 400px; text-align: left; overflow: auto;">
+      <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin-bottom: 16px; font-size: 14px;">
+        <div><strong>Graph Name:</strong> <span id="viewAovName"></span></div>
+        <div><strong>Version:</strong> <span id="viewAovVersion"></span></div>
+        <div><strong>Product:</strong> <span id="viewAovProduct"></span></div>
+        <div><strong>Status:</strong> <span id="viewAovStatus"></span></div>
+        <div><strong>Nodes 數量:</strong> <span id="viewAovNodesCount"></span></div>
+        <div><strong>Edges 數量:</strong> <span id="viewAovEdgesCount"></span></div>
+      </div>
+      <div style="border-top: 1px solid var(--border-color); padding-top: 16px; margin-top: 16px; text-align: center;">
+        <div id="viewAovDiagramContent" class="mermaid"></div>
+      </div>
+    </div>
+  </dialog>
+
+  <!-- AOV Modal -->
+  <dialog id="aovModal">
+    <div class="question-modal-header">
+      <h3 id="aovModalTitle">產品 BOM AOV 結構圖</h3>
+      <button type="button" class="question-minimize-btn" onclick="document.getElementById('aovModal').close()" aria-label="關閉">
+        <span class="minimize-icon"></span>
+      </button>
+    </div>
+    <div class="dialog-content" style="background: white; padding: 16px; min-width: 600px; min-height: 400px; text-align: center; overflow: auto;">
+      <div id="aovDiagramContent" class="mermaid"></div>
+    </div>
   </dialog>
 
   <script src="app.js"></script>

@@ -24,8 +24,9 @@ function pgError(code) {
 function createMockPool(options = {}) {
   const data = {
     materials: [{ material_id: "MAT-STEEL", name: "Steel", unit: "kg", stock: "1500.000", capacity: "2000.000", safety_stock: "300.000", location: "A-01-01", version: 1 }],
-    products: [{ product_id: "PRD-STEEL-TUBE", name: "Steel Tube", cycle_minutes: 20, stock: 0, mold_id: "MOLD-TUBE", version: 1 }],
+    products: [{ product_id: "PRD-STEEL-TUBE", name: "Steel Tube", stock: 0, version: 1 }],
     molds: [{ mold_id: "MOLD-TUBE", name: "Tube Mold", status: "Idle", line: null, eta: null, product_id: null, version: 1 }],
+    product_routings: [{ routing_id: "PRD-STEEL-TUBE-OP10", product_id: "PRD-STEEL-TUBE", step_number: 10, operation_name: "主要工序", cycle_minutes: 20, mold_id: "MOLD-TUBE" }],
     bom: [{ bom_id: "BOM-0001", product_id: "PRD-STEEL-TUBE", material_id: "MAT-STEEL", amount_per_unit: "2.500", version: 1 }],
     workOrders: [{ work_order_id: "WO-1", product_id: "PRD-STEEL-TUBE", quantity: 10, line: "L1", mold_id: "MOLD-TUBE", status: "Pending", creator_user_id: null, creator_name: "Operator" }],
     logs: [{ log_id: 1, level: "INFO", message: "ok", work_order_id: null, created_by_user_id: null, created_at: "2026-08-11T00:00:00.000Z" }],
@@ -78,10 +79,10 @@ function createMockPool(options = {}) {
       }
       if (sql.includes("UPDATE products")) {
         const id = params[4];
-        const version = params[5];
+        const version = params[3];
         const item = data.products.find((p) => p.product_id === id);
         if (!item || item.version !== version) return { rows: [] };
-        return { rows: [{ ...item, name: params[0], cycle_minutes: params[1], mold_id: params[2], stock: params[3], version: version + 1 }] };
+        return { rows: [{ ...item, name: params[0], stock: params[1], version: version + 1 }] };
       }
 
       if (sql.includes("FROM molds WHERE mold_id = $1")) {
